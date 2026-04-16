@@ -4,7 +4,15 @@ import { LogOut, ChevronDown, Star, Zap } from 'lucide-react';
 import { ThemeConfig } from '../lib/themes';
 import { AVATARS, updateAvatar } from '../lib/auth';
 import type { User } from '../lib/auth';
-import { xpProgressInLevel } from '../lib/supabase';
+import { levelFromXP } from '../lib/auth';
+
+function xpProgressInLevel(xp: number): { current: number; needed: number } {
+  const level = levelFromXP(xp);
+  const xpForLevel = (l: number) => l * l * 50;
+  const current = xp - xpForLevel(level - 1);
+  const needed  = xpForLevel(level) - xpForLevel(level - 1);
+  return { current: Math.max(0, current), needed: Math.max(1, needed) };
+}
 
 interface Props {
   user: User;
@@ -25,8 +33,8 @@ export default function UserMenu({ user, theme: t, onLogout, onAvatarChange }: P
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleAvatar = async (a: string) => {
-    await updateAvatar(user.id, a);
+  const handleAvatar = (a: string) => {
+    updateAvatar(user.id, a);
     onAvatarChange(a);
     setOpen(false);
   };

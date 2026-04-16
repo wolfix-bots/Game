@@ -1,4 +1,5 @@
-import { supabase } from './supabase';
+// ── Local Leaderboard ─────────────────────────────────────────────────────────
+// Stores high scores in localStorage per game.
 
 export interface LeaderboardEntry {
   rank:     number;
@@ -9,90 +10,35 @@ export interface LeaderboardEntry {
   date:     string;
 }
 
-// ── Submit a score to Supabase ────────────────────────────────────────────────
+function key(gameId: string) { return `foxytac-lb-${gameId}`; }
+
 export async function submitScore(
   gameId: string, userId: string, username: string, avatar: string, score: number
 ): Promise<void> {
-  // Only update if it's a personal best
-  const { data: existing } = await supabase
-    .from('scores')
-    .select('id,score')
-    .eq('game_id', gameId)
-    .eq('user_id', userId)
-    .order('score', { ascending: false })
-    .limit(1)
-    .single();
-
-  if (existing && existing.score >= score) return; // not a new best
-
-  // Delete old best, insert new
-  if (existing) await supabase.from('scores').delete().eq('id', existing.id);
-
-  await supabase.from('scores').insert({
-    user_id: userId, username, avatar,
-    game_id: gameId, score,
-  });
+  const entries: LeaderboardEntry[] = getTopScores(gameId, 100);
+  const existing = entries.findIndex(e => e.userId === userId);
+  if (existing !== -1 && entries[existing].score >= score) return;
+  if (existing !== -1) entries.splice(existing, 1);
+  entries.push({ rank: 0, userId, username, avatar, score, date: new Date().toLocaleDateString() });
+  entries.sort((a, b) => b.score - a.score);
+  entries.forEach((e, i) => { e.rank = i + 1; });
+  try { localStorage.setItem(key(gameId), JSON.stringify(entries.slice(0, 100))); } catch {}
 }
 
-// ── Get top scores for a game ─────────────────────────────────────────────────
-export async function getGameLeaderboard(gameId: string, limit = 20): Promise<LeaderboardEntry[]> {
-  const { data } = await supabase
-    .from('scores')
-    .select('user_id,username,avatar,score,created_at')
-    .eq('game_id', gameId)
-    .order('score', { ascending: false })
-    .limit(limit);
-
-  return (data || []).map((row, i) => ({
-    rank:     i + 1,
-    userId:   row.user_id,
-    username: row.username,
-    avatar:   row.avatar,
-    score:    row.score,
-    date:     row.created_at,
-  }));
+export function getTopScores(gameId: string, limit = 10): LeaderboardEntry[] {
+  try {
+    const raw = localStorage.getItem(key(gameId));
+    return raw ? JSON.parse(raw).slice(0, limit) : [];
+  } catch { return []; }
 }
 
-// ── Get global leaderboard (best score per user across all games) ─────────────
-export async function getGlobalLeaderboard(limit = 50): Promise<LeaderboardEntry[]> {
-  const { data } = await supabase
-    .from('scores')
-    .select('user_id,username,avatar,score,created_at')
-    .order('score', { ascending: false })
-    .limit(limit);
-
-  // Dedupe by user — keep their best
-  const seen = new Set<string>();
-  const unique: typeof data = [];
-  for (const row of (data || [])) {
-    if (!seen.has(row.user_id)) { seen.add(row.user_id); unique.push(row); }
-  }
-
-  return unique.map((row, i) => ({
-    rank:     i + 1,
-    userId:   row.user_id,
-    username: row.username,
-    avatar:   row.avatar,
-    score:    row.score,
-    date:     row.created_at,
-  }));
+export async function getLeaderboard(gameId: string, limit = 10): Promise<LeaderboardEntry[]> {
+  return getTopScores(gameId, limit);
 }
 
-// ── Get all-time top players by XP (from users table) ────────────────────────
-export async function getXPLeaderboard(limit = 50): Promise<{ rank: number; userId: string; username: string; avatar: string; xp: number; level: number; gamesWon: number }[]> {
-  const { data } = await supabase
-    .from('users')
-    .select('id,username,avatar,xp,level,games_won')
-    .order('xp', { ascending: false })
-    .limit(limit);
+// Aliases for backward compatibility
+export const getGameLeaderboard = getLeaderboard;
 
-  return (data || []).map((row, i) => ({
-    rank:     i + 1,
-    userId:   row.id,
-    username: row.username,
-    avatar:   row.avatar,
-    xp:       row.xp || 0,
-    level:    row.level || 1,
-    gamesWon: row.games_won || 0,
-  }));
+export async function getXPLeaderboard(_limit = 10): Promise<{ rank:number; userId:string; username:string; avatar:string; xp:number; level:number; gamesWon:number }[]> {
+  return []; // Local-only — no global XP leaderboard without a backend
 }
