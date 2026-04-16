@@ -1,114 +1,113 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import GameShell from '../components/GameShell';
-import { getSession } from '../lib/auth';
-import { submitScore } from '../lib/leaderboard';
 
-const CATS = ['Ones','Twos','Threes','Fours','Fives','Sixes','3 of a Kind','4 of a Kind','Full House','Sm Straight','Lg Straight','Yahtzee!','Chance'];
+const CATEGORIES = [
+  {id:'ones',label:'Ones',desc:'Sum of 1s'},
+  {id:'twos',label:'Twos',desc:'Sum of 2s'},
+  {id:'threes',label:'Threes',desc:'Sum of 3s'},
+  {id:'fours',label:'Fours',desc:'Sum of 4s'},
+  {id:'fives',label:'Fives',desc:'Sum of 5s'},
+  {id:'sixes',label:'Sixes',desc:'Sum of 6s'},
+  {id:'threeofakind',label:'3 of a Kind',desc:'Sum all if 3 match'},
+  {id:'fourofakind',label:'4 of a Kind',desc:'Sum all if 4 match'},
+  {id:'fullhouse',label:'Full House',desc:'25pts'},
+  {id:'smallstraight',label:'Sm. Straight',desc:'30pts'},
+  {id:'largestraight',label:'Lg. Straight',desc:'40pts'},
+  {id:'yahtzee',label:'YAHTZEE!',desc:'50pts'},
+  {id:'chance',label:'Chance',desc:'Sum all dice'},
+];
 
-function rollDie(){ return Math.floor(Math.random()*6)+1; }
-function rollAll(held:boolean[],dice:number[]){ return dice.map((d,i)=>held[i]?d:rollDie()); }
-
-function calcScore(cat:string,dice:number[]): number {
-  const counts=Array(7).fill(0); dice.forEach(d=>counts[d]++);
-  const sum=dice.reduce((a,b)=>a+b,0);
-  const vals=[1,2,3,4,5,6];
-  if(cat==='Ones') return counts[1]*1;
-  if(cat==='Twos') return counts[2]*2;
-  if(cat==='Threes') return counts[3]*3;
-  if(cat==='Fours') return counts[4]*4;
-  if(cat==='Fives') return counts[5]*5;
-  if(cat==='Sixes') return counts[6]*6;
-  if(cat==='3 of a Kind') return counts.some(c=>c>=3)?sum:0;
-  if(cat==='4 of a Kind') return counts.some(c=>c>=4)?sum:0;
-  if(cat==='Full House') return (counts.some(c=>c===3)&&counts.some(c=>c===2))?25:0;
-  if(cat==='Sm Straight'){const s=new Set(dice);const seqs=[[1,2,3,4],[2,3,4,5],[3,4,5,6]];return seqs.some(seq=>seq.every(v=>s.has(v)))?30:0;}
-  if(cat==='Lg Straight'){const s=new Set(dice);return([1,2,3,4,5].every(v=>s.has(v))||[2,3,4,5,6].every(v=>s.has(v)))?40:0;}
-  if(cat==='Yahtzee!') return counts.some(c=>c===5)?50:0;
-  if(cat==='Chance') return sum;
-  return 0;
+function calcScore(id:string, dice:number[]): number {
+  const counts: Record<number,number> = {};
+  dice.forEach(d => counts[d]=(counts[d]||0)+1);
+  const vals = Object.values(counts);
+  const sum = dice.reduce((a,b)=>a+b,0);
+  const sorted = [...dice].sort();
+  const isSmall = (d:number[]) => { const s=new Set(d); return (s.has(1)&&s.has(2)&&s.has(3)&&s.has(4))||(s.has(2)&&s.has(3)&&s.has(4)&&s.has(5))||(s.has(3)&&s.has(4)&&s.has(5)&&s.has(6)); };
+  const isLarge = (d:number[]) => { const s=[...new Set(d)].sort().join(''); return s==='12345'||s==='23456'; };
+  switch(id) {
+    case 'ones': return dice.filter(d=>d===1).reduce((a,b)=>a+b,0);
+    case 'twos': return dice.filter(d=>d===2).reduce((a,b)=>a+b,0);
+    case 'threes': return dice.filter(d=>d===3).reduce((a,b)=>a+b,0);
+    case 'fours': return dice.filter(d=>d===4).reduce((a,b)=>a+b,0);
+    case 'fives': return dice.filter(d=>d===5).reduce((a,b)=>a+b,0);
+    case 'sixes': return dice.filter(d=>d===6).reduce((a,b)=>a+b,0);
+    case 'threeofakind': return vals.some(v=>v>=3)?sum:0;
+    case 'fourofakind': return vals.some(v=>v>=4)?sum:0;
+    case 'fullhouse': return (vals.includes(3)&&vals.includes(2))||vals.includes(5)?25:0;
+    case 'smallstraight': return isSmall(dice)?30:0;
+    case 'largestraight': return isLarge(dice)?40:0;
+    case 'yahtzee': return vals.includes(5)?50:0;
+    case 'chance': return sum;
+    default: return 0;
+  }
 }
 
-const FACES=['','⚀','⚁','⚂','⚃','⚄','⚅'];
+const DICE_FACE = ['','⚀','⚁','⚂','⚃','⚄','⚅'];
 
 export default function Yahtzee() {
-  const [dice,setDice]=useState([1,1,1,1,1]);
-  const [held,setHeld]=useState([false,false,false,false,false]);
-  const [rolls,setRolls]=useState(0);
-  const [scores,setScores]=useState<Record<string,number|null>>(Object.fromEntries(CATS.map(c=>[c,null])));
-  const [done,setDone]=useState(false);
+  const [dice, setDice] = useState([1,1,1,1,1]);
+  const [held, setHeld] = useState([false,false,false,false,false]);
+  const [rolls, setRolls] = useState(3);
+  const [scores, setScores] = useState<Record<string,number|null>>({});
+  const [turn, setTurn] = useState(1);
+  const [rolling, setRolling] = useState(false);
 
-  const roll=()=>{
-    if(rolls>=3||done) return;
-    setDice(d=>rollAll(held,d)); setRolls(r=>r+1);
+  const totalScore = Object.values(scores).filter(v=>v!==null).reduce((a,b)=>a!+(b||0),0);
+  const done = CATEGORIES.every(c=>scores[c.id]!==undefined&&scores[c.id]!==null);
+
+  const roll = () => {
+    if (rolls<=0||rolling) return;
+    setRolling(true);
+    setTimeout(()=>{
+      setDice(d=>d.map((v,i)=>held[i]?v:Math.ceil(Math.random()*6)));
+      setRolls(r=>r-1); setRolling(false);
+    },300);
   };
 
-  const score=(cat:string)=>{
-    if(scores[cat]!==null||rolls===0) return;
-    const s=calcScore(cat,dice);
-    const ns={...scores,[cat]:s};
-    setScores(ns);
-    const allDone=Object.values(ns).every(v=>v!==null);
-    if(allDone){
-      setDone(true);
-      const total=(Object.values(ns).reduce((a,b)=>(a??0)+(b??0),0) as number)||0;
-      const u=getSession(); if(u) submitScore('yahtzee',u.username,u.avatar,total);
-    }
-    setDice([1,1,1,1,1]); setHeld([false,false,false,false,false]); setRolls(0);
+  const score = (id:string) => {
+    if (scores[id]!==undefined||rolls===3) return;
+    const s = calcScore(id,dice);
+    setScores(prev=>({...prev,[id]:s}));
+    setDice([1,1,1,1,1]); setHeld([false,false,false,false,false]); setRolls(3); setTurn(t=>t+1);
   };
 
-  const total=Object.values(scores).reduce((a,b)=>(a??0)+(b??0),0) as number;
-  const upper=(['Ones','Twos','Threes','Fours','Fives','Sixes'] as const).reduce((a,c)=>a+(scores[c]??0),0);
-  const bonus=upper>=63?35:0;
-
-  const reset=()=>{setDice([1,1,1,1,1]);setHeld([false,false,false,false,false]);setRolls(0);setScores(Object.fromEntries(CATS.map(c=>[c,null])));setDone(false);};
+  const reset = () => { setDice([1,1,1,1,1]); setHeld([false,false,false,false,false]); setRolls(3); setScores({}); setTurn(1); };
 
   return (
-    <GameShell title="Yahtzee" emoji="🎲" gameId="yahtzee" onReset={reset} scores={[{label:'Score',value:total+(bonus),color:'#f97316'},{label:'Bonus',value:bonus?'+35':'',color:'#22c55e'}]}>
+    <GameShell title="Yahtzee" emoji="🎲" onReset={reset} scores={[{label:'Score',value:totalScore,color:'#f97316'},{label:'Turn',value:turn,color:'#94a3b8'}]}>
+      {done && <div style={{textAlign:'center',marginBottom:'12px',color:'#f97316',fontWeight:800,fontSize:'1.1rem'}}>🎉 Final Score: {totalScore}</div>}
       {/* Dice */}
-      <div style={{display:'flex',gap:'10px',justifyContent:'center',marginBottom:'16px'}}>
+      <div style={{display:'flex',gap:'10px',justifyContent:'center',marginBottom:'14px',flexWrap:'wrap'}}>
         {dice.map((d,i)=>(
-          <motion.button key={i} whileTap={{scale:0.9}} onClick={()=>{if(rolls>0)setHeld(h=>{const n=[...h];n[i]=!n[i];return n;})}}
-            animate={{rotate:held[i]?0:[0,-15,15,0],scale:held[i]?1:1}}
-            style={{width:56,height:56,background:held[i]?'#22c55e22':'#1e293b',border:`3px solid ${held[i]?'#22c55e':'#334155'}`,borderRadius:'12px',fontSize:'2rem',cursor:rolls>0?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:held[i]?'0 0 12px #22c55e44':'none'}}
-          >{FACES[d]}</motion.button>
+          <motion.button key={i} onClick={()=>setHeld(h=>{const nh=[...h];nh[i]=!nh[i];return nh;})}
+            animate={{rotate:rolling&&!held[i]?[0,15,-15,0]:0}} transition={{duration:0.3}}
+            style={{width:60,height:60,borderRadius:'14px',border:`3px solid ${held[i]?'#f97316':'#334155'}`,background:held[i]?'#f9730622':'#1e293b',cursor:'pointer',fontSize:'2.2rem',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:held[i]?'0 0 12px #f9730644':'none'}}
+          >{DICE_FACE[d]}</motion.button>
         ))}
       </div>
-
-      <div style={{textAlign:'center',marginBottom:'14px'}}>
-        <button onClick={roll} disabled={rolls>=3||done}
-          style={{background:rolls>=3||done?'#334155':'#f97316',border:'none',borderRadius:'14px',padding:'10px 28px',color:'#fff',fontWeight:800,fontSize:'1rem',cursor:rolls>=3||done?'not-allowed':'pointer',fontFamily:'Outfit,sans-serif',opacity:rolls>=3||done?0.6:1}}
-        >🎲 Roll ({3-rolls} left)</button>
-        {rolls>0&&<div style={{color:'#64748b',fontSize:'0.75rem',marginTop:'6px'}}>Click dice to hold them</div>}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:'12px',marginBottom:'16px'}}>
+        <button onClick={roll} disabled={rolls<=0||done}
+          style={{background:rolls>0&&!done?'#f97316':'#334155',border:'none',borderRadius:'12px',padding:'10px 28px',color:rolls>0&&!done?'#fff':'#64748b',fontWeight:800,cursor:rolls>0&&!done?'pointer':'not-allowed',fontFamily:'Outfit,sans-serif',fontSize:'0.95rem'}}
+        >🎲 Roll ({rolls} left)</button>
+        <div style={{color:'#64748b',fontSize:'0.8rem'}}>Click dice to hold</div>
       </div>
-
       {/* Scorecard */}
-      <div style={{background:'#0f172a',borderRadius:'14px',overflow:'hidden',border:'1px solid #1e293b'}}>
-        <div style={{background:'#1e293b',padding:'8px 14px',display:'flex',justifyContent:'space-between'}}>
-          <span style={{color:'#94a3b8',fontWeight:700,fontSize:'0.8rem'}}>CATEGORY</span>
-          <span style={{color:'#94a3b8',fontWeight:700,fontSize:'0.8rem'}}>SCORE</span>
-        </div>
-        {CATS.map((cat,i)=>{
-          const s=scores[cat];
-          const preview=s===null&&rolls>0?calcScore(cat,dice):null;
-          return(
-            <div key={cat} onClick={()=>score(cat)}
-              style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 14px',borderBottom:'1px solid #1e293b',cursor:s===null&&rolls>0?'pointer':'default',background:s===null&&rolls>0&&preview!==null?'rgba(249,115,22,0.05)':'transparent',transition:'background 0.15s'}}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px',maxWidth:'380px',margin:'0 auto'}}>
+        {CATEGORIES.map(cat=>{
+          const val = scores[cat.id];
+          const preview = rolls<3&&val===undefined?calcScore(cat.id,dice):null;
+          return (
+            <button key={cat.id} onClick={()=>score(cat.id)} disabled={val!==undefined||rolls===3}
+              style={{padding:'8px 10px',borderRadius:'10px',border:`1px solid ${val!==undefined?'#334155':preview&&preview>0?'#f9730644':'#334155'}`,background:val!==undefined?'#1e293b':preview&&preview>0?'#f9730611':'#0f172a',cursor:val===undefined&&rolls<3?'pointer':'default',textAlign:'left',fontFamily:'Outfit,sans-serif'}}
             >
-              <span style={{color:s!==null?'#475569':'#e2e8f0',fontSize:'0.85rem',fontWeight:600}}>{cat}</span>
-              <span style={{color:s!==null?'#f97316':preview?'#f97316aa':'#334155',fontWeight:800,fontSize:'0.9rem'}}>
-                {s!==null?s:preview!==null?`+${preview}`:'—'}
-              </span>
-            </div>
+              <div style={{color:val!==undefined?'#64748b':'#e2e8f0',fontWeight:700,fontSize:'0.75rem'}}>{cat.label}</div>
+              <div style={{color:val!==undefined?'#f97316':preview!==null?'#f97316aa':'#475569',fontWeight:800,fontSize:'0.9rem'}}>{val!==undefined?val:preview!==null?`+${preview}`:'-'}</div>
+            </button>
           );
         })}
-        <div style={{padding:'10px 14px',borderTop:'2px solid #334155',display:'flex',justifyContent:'space-between'}}>
-          <span style={{color:'#f97316',fontWeight:800}}>TOTAL {bonus?`(+35 bonus)`:upper>=63?'':` (${upper}/63 for bonus)`}</span>
-          <span style={{color:'#f97316',fontWeight:900,fontSize:'1.1rem'}}>{total+bonus}</span>
-        </div>
       </div>
-
-      {done&&<div style={{textAlign:'center',marginTop:'14px',color:'#22c55e',fontWeight:800,fontSize:'1.1rem'}}>🎉 Game Over! Final: {(total as number)+bonus}</div>}
     </GameShell>
   );
 }

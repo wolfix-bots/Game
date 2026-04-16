@@ -8,9 +8,10 @@ import { ThemeConfig } from '../lib/themes';
 interface Props {
   theme: ThemeConfig;
   onAuth: (user: User) => void;
+  onGuest: () => void;
 }
 
-export default function AuthScreen({ theme: t, onAuth }: Props) {
+export default function AuthScreen({ theme: t, onAuth, onGuest }: Props) {
   const [tab, setTab]           = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -165,6 +166,22 @@ export default function AuthScreen({ theme: t, onAuth }: Props) {
               : tab === 'login' ? <><LogIn size={18} /> Sign In</> : <><UserPlus size={18} /> Create Account</>}
           </motion.button>
         </form>
+
+        {/* Divider */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 0' }}>
+          <div style={{ flex: 1, height: 1, background: t.border }} />
+          <span style={{ color: t.textMuted, fontSize: '0.78rem' }}>or</span>
+          <div style={{ flex: 1, height: 1, background: t.border }} />
+        </div>
+
+        {/* Guest */}
+        <button onClick={onGuest}
+          style={{ width: '100%', background: 'transparent', border: `2px solid ${t.border}`, borderRadius: 14, padding: 12, cursor: 'pointer', color: t.textMuted, fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'all 0.2s', fontFamily: "'Outfit',sans-serif" }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = t.accent; e.currentTarget.style.color = t.text; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = t.border; e.currentTarget.style.color = t.textMuted; }}
+        >
+          Continue as Guest →
+        </button>
       </motion.div>
 
       <p style={{ color: t.textMuted, fontSize: '0.72rem', marginTop: '16px', textAlign: 'center', maxWidth: '300px' }}>
