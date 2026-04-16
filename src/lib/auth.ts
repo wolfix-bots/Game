@@ -1,6 +1,7 @@
 // ── FoxyArcade Auth ───────────────────────────────────────────────────────────
 // Uses Supabase as primary store (cross-device accounts).
 // Passwords are SHA-256 hashed in the browser — never sent plaintext.
+// OAuth (Google, GitHub, Discord, Twitter) handled via Supabase Auth.
 
 import { supabase, DBUser, levelFromXP } from './supabase';
 
@@ -162,6 +163,77 @@ export async function refreshSession(userId: string): Promise<User | null> {
   const { data } = await supabase.from('users').select('*').eq('id', userId).single();
   if (!data) return null;
   const user = toUser(data as DBUser);
+  saveSession(user);
+  return user;
+}
+
+// ── OAuth Sign In ─────────────────────────────────────────────────────────────
+export type OAuthProvider = 'google' | 'github' | 'discord' | 'twitter';
+
+export async function signInWithOAuth(
+  provider: OAuthProvider
+): Promise<{ error: string } | null> {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo: window.location.origin + window.location.pathname,
+      scopes: provider === 'discord' ? 'identify email' : undefined,
+    },
+  });
+  if (error) return { error: error.message };
+  return null; // redirect happens — page reloads
+}
+
+// ── Handle OAuth callback & create/load user row ──────────────────────────────
+export async function handleOAuthCallback(): Promise<User | null> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user) return null;
+
+  const oauthUser = session.user;
+  const id        = oauthUser.id;
+  const email     = oauthUser.email || '';
+  const meta      = oauthUser.user_metadata || {};
+
+  // Build a display name from provider metadata
+  const rawName =
+    meta.full_name || meta.name || meta.user_name ||
+    meta.preferred_username || email.split('@')[0] || 'Player';
+
+  // Sanitise to allowed chars, max 20
+  const username = rawName.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 20) || 'Player';
+
+  // Check if user row already exists
+  const { data: existing } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (existing) {
+    await supabase.from('users').update({ last_seen: Date.now() }).eq('id', id);
+    const user = toUser(existing as DBUser);
+    saveSession(user);
+    return user;
+  }
+
+  // First OAuth login — create user row
+  const avatar = meta.avatar_url ? '🦊' : '🦊'; // always emoji avatar
+  const now    = Date.now();
+
+  await supabase.from('users').insert({
+    id,
+    username,
+    avatar,
+    password_hash: 'oauth', // not used for OAuth users
+    xp: 0, level: 1, games_played: 0, games_won: 0,
+    achievements: [], joined_at: now, last_seen: now,
+  });
+
+  const user: User = {
+    id, username, avatar,
+    xp: 0, level: 1, gamesPlayed: 0, gamesWon: 0,
+    achievements: [], createdAt: now,
+  };
   saveSession(user);
   return user;
 }

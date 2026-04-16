@@ -100,6 +100,63 @@ create policy "public_all_scores" on foxytac_scores for all using (true) with ch
 
 ---
 
+### Step 3 — Enable OAuth (Google, GitHub, Discord, Twitter) — Optional
+
+> This lets users sign in with one click — no password needed.
+
+**1. Enable providers in Supabase**
+- Supabase Dashboard → **Authentication → Providers**
+- Enable each provider you want:
+
+| Provider | What you need |
+|----------|--------------|
+| **Google** | Google Cloud Console → OAuth 2.0 Client ID + Secret |
+| **GitHub** | GitHub → Settings → Developer Settings → OAuth Apps → New App |
+| **Discord** | Discord Developer Portal → New Application → OAuth2 |
+| **Twitter/X** | Twitter Developer Portal → App → Keys & Tokens |
+
+**2. Set the redirect URL**
+
+In each provider's settings, add this as an allowed redirect URL:
+```
+https://your-supabase-project.supabase.co/auth/v1/callback
+```
+
+**3. Set your site URL in Supabase**
+- Supabase → **Authentication → URL Configuration**
+- Set **Site URL** to your deployed app URL (e.g. `https://your-app.vercel.app`)
+- Add it to **Redirect URLs** too
+
+**4. No extra env vars needed** — Supabase handles all the OAuth tokens internally.
+
+✅ OAuth buttons on the login screen will now work!
+
+---
+
+### Google OAuth — Step by Step
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a project → **APIs & Services → Credentials → Create OAuth Client ID**
+3. Application type: **Web application**
+4. Authorized redirect URIs: `https://xxxx.supabase.co/auth/v1/callback`
+5. Copy **Client ID** and **Client Secret** → paste into Supabase Google provider settings
+
+### GitHub OAuth — Step by Step
+
+1. Go to **github.com → Settings → Developer Settings → OAuth Apps → New OAuth App**
+2. Homepage URL: your app URL
+3. Authorization callback URL: `https://xxxx.supabase.co/auth/v1/callback`
+4. Copy **Client ID** and **Client Secret** → paste into Supabase GitHub provider settings
+
+### Discord OAuth — Step by Step
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
+2. New Application → **OAuth2 → Redirects → Add Redirect**
+3. Add: `https://xxxx.supabase.co/auth/v1/callback`
+4. Copy **Client ID** and **Client Secret** → paste into Supabase Discord provider settings
+
+---
+
 ## 🎮 Games
 
 | Game | Players | Type |
