@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy, RefreshCw } from 'lucide-react';
 import { useApp } from '../App';
-import { getGlobalLeaderboard, LeaderboardEntry, xpToLevel } from '../lib/profile';
+import { fetchGlobalLeaderboard, getLocalLB, LeaderboardEntry, xpToLevel } from '../lib/profile';
+import { isSupabaseConfigured } from '../lib/supabase';
 import { GAMES } from '../lib/arcade';
 
 const MEDAL = ['🥇', '🥈', '🥉'];
@@ -14,7 +15,13 @@ export default function GlobalLeaderboardPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [tab, setTab] = useState<'xp' | 'wins'>('xp');
 
-  const load = () => setEntries(getGlobalLeaderboard());
+  const [loading, setLoading] = useState(false);
+  const load = async () => {
+    setLoading(true);
+    const data = await fetchGlobalLeaderboard();
+    setEntries(data);
+    setLoading(false);
+  };
   useEffect(() => { load(); }, []);
 
   const sorted = [...entries].sort((a, b) => tab === 'xp' ? b.xp - a.xp : b.gamesWon - a.gamesWon);
@@ -32,7 +39,7 @@ export default function GlobalLeaderboardPage() {
           <h1 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: '1.1rem', margin: 0 }}>Global Leaderboard</h1>
         </div>
         <button onClick={load} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', padding: '8px', cursor: 'pointer', color: '#94a3b8', display: 'flex' }}>
-          <RefreshCw size={16} />
+          <RefreshCw size={16} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
         </button>
       </div>
 

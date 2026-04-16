@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy, Gamepad2, Star, Zap, LogOut } from 'lucide-react';
 import { useApp } from '../App';
 import { xpForNextLevel, xpProgress, xpToLevel, getGameLeaderboard } from '../lib/profile';
+import { isSupabaseConfigured } from '../lib/supabase';
 import { getAchievements } from '../lib/achievements';
 import { GAMES } from '../lib/arcade';
 import { AVATARS, updateAvatar } from '../lib/auth';
@@ -34,7 +35,16 @@ export default function ProfilePage() {
         <button onClick={() => nav('/')} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', padding: '8px', cursor: 'pointer', color: '#94a3b8', display: 'flex' }}>
           <ArrowLeft size={18} />
         </button>
-        <h1 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: '1.1rem', margin: 0 }}>My Profile</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <h1 style={{ color: '#e2e8f0', fontWeight: 800, fontSize: '1.1rem', margin: 0 }}>My Profile</h1>
+          <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 8px', borderRadius: '20px',
+            background: isSupabaseConfigured ? '#22c55e22' : '#f59e0b22',
+            color: isSupabaseConfigured ? '#22c55e' : '#f59e0b',
+            border: `1px solid ${isSupabaseConfigured ? '#22c55e44' : '#f59e0b44'}`,
+          }}>
+            {isSupabaseConfigured ? '☁️ Cloud' : '💾 Local'}
+          </span>
+        </div>
         <button onClick={handleLogout} style={{ background: '#ef444418', border: '1px solid #ef444430', borderRadius: '10px', padding: '8px', cursor: 'pointer', color: '#ef4444', display: 'flex' }}>
           <LogOut size={16} />
         </button>
