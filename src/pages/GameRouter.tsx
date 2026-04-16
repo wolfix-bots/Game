@@ -1,105 +1,77 @@
-import React, { Suspense, lazy } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { lazy, Suspense } from 'react';
+import { useParams, Navigate } from 'react-router-dom';
+import { User } from '../lib/auth';
 import { ArrowLeft } from 'lucide-react';
-import { ThemeConfig } from '../lib/themes';
+import { useNavigate } from 'react-router-dom';
 
-// Lazy load all games
-const TicTacToePage  = lazy(() => import('./TicTacToePage'));
-const Chess          = lazy(() => import('../games/Chess'));
-const Connect4       = lazy(() => import('../games/Connect4'));
-const Checkers       = lazy(() => import('../games/Checkers'));
-const Reversi        = lazy(() => import('../games/Reversi'));
-const Battleship     = lazy(() => import('../games/Battleship'));
-const RockPaper      = lazy(() => import('../games/RockPaperScissors'));
-const Pong           = lazy(() => import('../games/Pong'));
-const SnakeLadder    = lazy(() => import('../games/SnakeLadder'));
-const Ludo           = lazy(() => import('../games/Ludo'));
-const Yahtzee        = lazy(() => import('../games/Yahtzee'));
-const Blackjack      = lazy(() => import('../games/Blackjack'));
-const Solitaire      = lazy(() => import('../games/Solitaire'));
-const Wordle         = lazy(() => import('../games/Wordle'));
-const Sudoku         = lazy(() => import('../games/Sudoku'));
-const Memory         = lazy(() => import('../games/Memory'));
-const Sliding        = lazy(() => import('../games/Sliding'));
-const Game2048       = lazy(() => import('../games/Game2048'));
-const Hangman        = lazy(() => import('../games/Hangman'));
-const Minesweeper    = lazy(() => import('../games/Minesweeper'));
-const Trivia         = lazy(() => import('../games/Trivia'));
-const TypeRacer      = lazy(() => import('../games/TypeRacer'));
-const Snake          = lazy(() => import('../games/Snake'));
-const Flappy         = lazy(() => import('../games/Flappy'));
-const Dino           = lazy(() => import('../games/Dino'));
-const Breakout       = lazy(() => import('../games/Breakout'));
-const Asteroids      = lazy(() => import('../games/Asteroids'));
-const WhackAMole     = lazy(() => import('../games/WhackAMole'));
-const Simon          = lazy(() => import('../games/Simon'));
+// Lazy-load every game for fast initial load
+const TicTacToe  = lazy(() => import('./TicTacToePage'));
+const Connect4   = lazy(() => import('../games/Connect4'));
+const Snake      = lazy(() => import('../games/Snake'));
+const Game2048   = lazy(() => import('../games/Game2048'));
+const Wordle     = lazy(() => import('../games/Wordle'));
+const Minesweeper= lazy(() => import('../games/Minesweeper'));
+const Memory     = lazy(() => import('../games/Memory'));
+const Blackjack  = lazy(() => import('../games/Blackjack'));
+const RPS        = lazy(() => import('../games/RockPaperScissors'));
+const Hangman    = lazy(() => import('../games/Hangman'));
+const Pong       = lazy(() => import('../games/Pong'));
+const WhackAMole = lazy(() => import('../games/WhackAMole'));
+const Flappy     = lazy(() => import('../games/Flappy'));
+const Reversi    = lazy(() => import('../games/Reversi'));
+const Simon      = lazy(() => import('../games/Simon'));
+const Sudoku     = lazy(() => import('../games/Sudoku'));
+const Checkers   = lazy(() => import('../games/Checkers'));
+const Dino       = lazy(() => import('../games/Dino'));
 
-const GAME_MAP: Record<string, React.ComponentType<any>> = {
-  tictactoe:       TicTacToePage,
-  chess:           Chess,
-  connect4:        Connect4,
-  checkers:        Checkers,
-  reversi:         Reversi,
-  battleship:      Battleship,
-  rockpaper:       RockPaper,
-  pong:            Pong,
-  snakeladdergame: SnakeLadder,
-  ludo:            Ludo,
-  yahtzee:         Yahtzee,
-  blackjack:       Blackjack,
-  solitaire:       Solitaire,
-  wordle:          Wordle,
-  sudoku:          Sudoku,
-  memory:          Memory,
-  sliding:         Sliding,
-  '2048':          Game2048,
-  hangman:         Hangman,
-  minesweeper:     Minesweeper,
-  trivia:          Trivia,
-  typeracer:       TypeRacer,
-  snake:           Snake,
-  flappy:          Flappy,
-  dino:            Dino,
-  breakout:        Breakout,
-  asteroids:       Asteroids,
-  whackamole:      WhackAMole,
-  simon:           Simon,
+const GAME_MAP: Record<string, React.LazyExoticComponent<any>> = {
+  tictactoe:  TicTacToe,
+  connect4:   Connect4,
+  snake:      Snake,
+  '2048':     Game2048,
+  wordle:     Wordle,
+  minesweeper:Minesweeper,
+  memory:     Memory,
+  blackjack:  Blackjack,
+  rockpaper:  RPS,
+  hangman:    Hangman,
+  pong:       Pong,
+  whackamole: WhackAMole,
+  flappy:     Flappy,
+  reversi:    Reversi,
+  simon:      Simon,
+  sudoku:     Sudoku,
+  checkers:   Checkers,
+  dino:       Dino,
 };
 
-interface Props { theme: ThemeConfig; }
-
-export default function GameRouter({ theme }: Props) {
-  const { id } = useParams<{ id: string }>();
+function LoadingScreen() {
   const nav = useNavigate();
-  const GameComponent = id ? GAME_MAP[id] : null;
-
-  if (!GameComponent) {
-    return (
-      <div style={{ minHeight: '100vh', background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px', fontFamily: 'Outfit,sans-serif' }}>
-        <div style={{ fontSize: '4rem' }}>🎮</div>
-        <div style={{ color: theme.text, fontWeight: 800, fontSize: '1.3rem' }}>Game not found</div>
-        <button onClick={() => nav('/')} style={{ background: theme.accent, border: 'none', borderRadius: '12px', padding: '10px 24px', color: '#fff', fontWeight: 700, cursor: 'pointer', fontFamily: 'Outfit,sans-serif' }}>← Back to Arcade</button>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ minHeight: '100vh', background: theme.bg, fontFamily: 'Outfit,sans-serif' }}>
-      {/* Back button */}
-      <div style={{ padding: '12px 16px', maxWidth: '600px', margin: '0 auto' }}>
-        <button onClick={() => nav('/')}
-          style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: '12px', padding: '8px 14px', cursor: 'pointer', color: theme.textMuted, display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.85rem', fontFamily: 'Outfit,sans-serif', backdropFilter: 'blur(8px)' }}
-        >
-          <ArrowLeft size={15} /> Arcade
-        </button>
-      </div>
-      <Suspense fallback={
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh' }}>
-          <div style={{ color: theme.accent, fontSize: '2rem', animation: 'spin 1s linear infinite' }}>🦊</div>
-        </div>
-      }>
-        <GameComponent />
-      </Suspense>
+    <div style={{ minHeight:'100vh', background:'linear-gradient(135deg,#0f172a,#1e293b)', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', fontFamily:'Outfit,sans-serif', gap:'16px' }}>
+      <div style={{ fontSize:'3rem', animation:'spin 1s linear infinite' }}>🦊</div>
+      <div style={{ color:'#94a3b8', fontWeight:700 }}>Loading game…</div>
+      <button onClick={() => nav('/')} style={{ background:'transparent', border:'1px solid #334155', borderRadius:'10px', padding:'8px 16px', color:'#64748b', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px', fontFamily:'Outfit,sans-serif' }}>
+        <ArrowLeft size={14} /> Back to Arcade
+      </button>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
     </div>
+  );
+}
+
+interface Props { user: User | null; }
+
+export default function GameRouter({ user }: Props) {
+  const { gameId } = useParams<{ gameId: string }>();
+  if (!gameId) return <Navigate to="/" replace />;
+
+  const GameComponent = GAME_MAP[gameId];
+  if (!GameComponent) return <Navigate to="/" replace />;
+
+  const AnyGame = GameComponent as React.ComponentType<any>;
+  return (
+    <Suspense fallback={<LoadingScreen />}>
+      <AnyGame user={user} />
+    </Suspense>
   );
 }

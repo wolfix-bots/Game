@@ -178,7 +178,7 @@ export async function addXP(
       game_id:  gameId,
       score,
       result,
-    } as DBScore);
+    } as unknown as DBScore);
   }
 
   return p;
