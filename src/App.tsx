@@ -34,21 +34,19 @@ import Yahtzee      from './games/Yahtzee';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(() => getSession());
-  const [isGuest, setIsGuest] = useState(false);
 
   const theme = THEMES['night'];
 
-  if (!user && !isGuest) {
+  if (!user) {
     return (
       <AuthScreen
         theme={THEMES['night']}
         onAuth={(u: User) => setUser(u)}
-        onGuest={() => setIsGuest(true)}
       />
     );
   }
 
-  const handleLogout = () => { logout(); setUser(null); setIsGuest(false); };
+  const handleLogout = () => { logout(); setUser(null); };
   const handleAvatarChange = (u: User) => setUser(u);
 
   return (
