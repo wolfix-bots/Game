@@ -2,36 +2,36 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Check, Users, MessageCircle, Send,
-  WifiOff, RefreshCw, Link, Loader2, LogOut, Zap,
+  WifiOff, RefreshCw, Link, Loader2, LogOut,
 } from 'lucide-react';
-import PartySocket from 'partysocket';
+
+import { ably, getRoomChannel } from '../lib/ably';
 import { ThemeConfig } from '../lib/themes';
+import { checkWinner, isDraw } from '../lib/AI';
 import GameBoard from './GameBoard';
 import { sounds } from '../lib/sounds';
 import { saveScore } from '../lib/storage';
 
-// ─── Config ──────────────────────────────────────────────────────────────────
-// PartyKit host: use env var in prod, default to partykit.dev for dev/demo
-const PARTYKIT_HOST =
-  import.meta.env.VITE_PARTYKIT_HOST || 'tictactoe-pro.USERNAME.partykit.dev';
-
-const IS_DEMO = PARTYKIT_HOST.includes('USERNAME');
-
 // ─── Types ───────────────────────────────────────────────────────────────────
-interface ChatMsg  { text: string; player: string; ts: number; }
+interface ChatMsg { text: string; player: string; ts: number; }
+
 interface RoomState {
-  board:    string[];
-  turn:     string;
-  playerX:  string | null;
-  playerO:  string | null;
-  winner:   string | null;
-  isDraw:   boolean;
-  chat:     ChatMsg[];
+  board:   string[];
+  turn:    string;
+  playerX: string | null;
+  playerO: string | null;
+  winner:  string | null;
+  isDraw:  boolean;
+  chat:    ChatMsg[];
 }
 
-type ServerMsg =
-  | { type: 'state'; state: RoomState }
-  | { type: 'role';  role: 'X' | 'O' | null };
+type GameMsg =
+  | { type: 'state';  state: RoomState }
+  | { type: 'role';   role: 'X' | 'O' }
+  | { type: 'move';   index: number; player: string }
+  | { type: 'reset' }
+  | { type: 'chat';   text: string; player: string; ts: number }
+  | { type: 'join';   clientId: string };
 
 interface MultiplayerProps {
   theme: ThemeConfig;
@@ -49,35 +49,44 @@ function genCode(): string {
 }
 
 const EMPTY_BOARD = Array(9).fill('');
+const EMPTY_STATE = (): RoomState => ({
+  board: EMPTY_BOARD,
+  turn: 'X',
+  playerX: null,
+  playerO: null,
+  winner: null,
+  isDraw: false,
+  chat: [],
+});
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: MultiplayerProps) {
-  const [screen, setScreen]     = useState<'lobby' | 'waiting' | 'game'>('lobby');
-  const [myRole, setMyRole]     = useState<'X' | 'O' | null>(null);
-  const [roomId, setRoomId]     = useState('');
-  const [joinInput, setJoinInput] = useState('');
-  const [serverState, setServerState] = useState<RoomState | null>(null);
-  const [chatMsg, setChatMsg]   = useState('');
-  const [showChat, setShowChat] = useState(false);
-  const [copied, setCopied]     = useState(false);
+  const [screen, setScreen]         = useState<'lobby' | 'waiting' | 'game'>('lobby');
+  const [myRole, setMyRole]         = useState<'X' | 'O' | null>(null);
+  const [roomId, setRoomId]         = useState('');
+  const [joinInput, setJoinInput]   = useState('');
+  const [gameState, setGameState]   = useState<RoomState>(EMPTY_STATE());
+  const [chatMsg, setChatMsg]       = useState('');
+  const [showChat, setShowChat]     = useState(false);
+  const [copied, setCopied]         = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected]   = useState(false);
-  const [error, setError]       = useState('');
+  const [error, setError]           = useState('');
 
-  const socketRef  = useRef<PartySocket | null>(null);
-  const myRoleRef  = useRef<'X' | 'O' | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const channelRef  = useRef<any>(null);
+  const myRoleRef   = useRef<'X' | 'O' | null>(null);
+  const myIdRef     = useRef(ably.auth.clientId || Math.random().toString(36).slice(2));
+  const gameRef     = useRef<RoomState>(EMPTY_STATE());
+  const chatEndRef  = useRef<HTMLDivElement>(null);
   myRoleRef.current = myRole;
+  gameRef.current   = gameState;
 
   // Scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [serverState?.chat]);
+  }, [gameState.chat]);
 
-  // Cleanup
-  useEffect(() => () => { socketRef.current?.close(); }, []);
-
-  // Auto-join from ?room=CODE in URL
+  // Auto-join from ?room=CODE
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const code = p.get('room');
@@ -87,123 +96,179 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
     }
   }, []);
 
-  // ── Connect to a PartyKit room ──────────────────────────────────────────────
-  const connect = useCallback((code: string) => {
-    socketRef.current?.close();
+  // Cleanup on unmount
+  useEffect(() => () => { detach(); }, []);
+
+  // ── Detach channel ───────────────────────────────────────────────────────────
+  function detach() {
+    if (channelRef.current) {
+      channelRef.current.unsubscribe();
+      channelRef.current.detach();
+      channelRef.current = null;
+    }
+  }
+
+  // ── Publish helper ───────────────────────────────────────────────────────────
+  async function publish(msg: GameMsg) {
+    try { await channelRef.current?.publish('game', msg); } catch (e) {}
+  }
+
+  // ── Connect to channel ──────────────────────────────────────────────────────
+  const joinChannel = useCallback(async (code: string, asHost: boolean) => {
+    detach();
     setConnecting(true);
-    setConnected(false);
     setError('');
-    setServerState(null);
 
-    const socket = new PartySocket({
-      host:  PARTYKIT_HOST,
-      room:  code,
-      party: 'main',
-    });
-    socketRef.current = socket;
+    try {
+      const ch = getRoomChannel(code);
+      channelRef.current = ch;
 
-    socket.addEventListener('open', () => {
-      setConnecting(false);
-      setConnected(true);
-      socket.send(JSON.stringify({ type: 'join' }));
-    });
-
-    socket.addEventListener('message', (evt) => {
-      let msg: ServerMsg;
-      try { msg = JSON.parse(evt.data); } catch { return; }
-
-      if (msg.type === 'role') {
-        const role = msg.role;
-        setMyRole(role);
-        myRoleRef.current = role;
-        if (role === 'X') setScreen('waiting');
-        else if (role === 'O') setScreen('game');
-        if (role && soundEnabled) sounds.join();
-      }
-
-      if (msg.type === 'state') {
-        const prev = serverState;
-        setServerState(msg.state);
-
-        // Sound cues on state change
-        if (msg.state.winner && !prev?.winner && soundEnabled) sounds.win();
-        if (msg.state.isDraw && !prev?.isDraw && soundEnabled) sounds.draw();
-
-        // Transition waiting → game when opponent joins
+      // Listen for all game messages
+      await ch.subscribe('game', (msg: any) => {
+        const data = msg.data as GameMsg;
         const role = myRoleRef.current;
-        if (role === 'X' && msg.state.playerO) setScreen('game');
 
-        // Score tracking
-        const role2 = myRoleRef.current;
-        if (role2) {
-          if (msg.state.winner && !prev?.winner) {
-            saveScore('online', msg.state.winner === role2 ? 'win' : 'loss');
-          } else if (msg.state.isDraw && !prev?.isDraw) {
-            saveScore('online', 'draw');
+        if (data.type === 'state') {
+          const prev = gameRef.current;
+          setGameState(data.state);
+          gameRef.current = data.state;
+
+          // Sound cues
+          if (data.state.winner && !prev.winner && soundEnabled) sounds.win();
+          if (data.state.isDraw && !prev.isDraw && soundEnabled) sounds.draw();
+
+          // Transition waiting → game
+          if (role === 'X' && data.state.playerO) setScreen('game');
+
+          // Score tracking
+          if (role) {
+            if (data.state.winner && !prev.winner)
+              saveScore('online', data.state.winner === role ? 'win' : 'loss');
+            else if (data.state.isDraw && !prev.isDraw)
+              saveScore('online', 'draw');
           }
         }
+
+        if (data.type === 'join' && asHost) {
+          const newState: RoomState = {
+            ...gameRef.current,
+            playerO: data.clientId,
+          };
+          setGameState(newState);
+          gameRef.current = newState;
+          setScreen('game');
+          publish({ type: 'state', state: newState });
+        }
+      });
+
+      await ch.attach();
+      setConnected(true);
+      setConnecting(false);
+
+      if (asHost) {
+        // Host: initialise state
+        const initState: RoomState = {
+          ...EMPTY_STATE(),
+          playerX: myIdRef.current,
+        };
+        setGameState(initState);
+        gameRef.current = initState;
+        setMyRole('X');
+        myRoleRef.current = 'X';
+        setScreen('waiting');
+      } else {
+        setMyRole('O');
+        myRoleRef.current = 'O';
+        setScreen('game');
+        await publish({ type: 'join', clientId: myIdRef.current });
+        if (soundEnabled) sounds.join();
       }
-    });
-
-    socket.addEventListener('close', () => {
-      setConnected(false);
-    });
-
-    socket.addEventListener('error', () => {
+    } catch (e: any) {
       setConnecting(false);
       setConnected(false);
-      setError('Connection failed. Check your PartyKit host in .env or README.');
-    });
+      setError('Connection failed. Check your Ably key.');
+    }
   }, [soundEnabled]);
 
   // ── Create room ─────────────────────────────────────────────────────────────
   const createRoom = useCallback(() => {
     const code = genCode();
     setRoomId(code);
-    connect(code);
-  }, [connect]);
+    joinChannel(code, true);
+  }, [joinChannel]);
 
   // ── Join room ───────────────────────────────────────────────────────────────
   const joinRoom = useCallback(() => {
     const code = joinInput.trim().toUpperCase().slice(0, 6);
     if (code.length < 4) { setError('Enter a valid room code.'); return; }
     setRoomId(code);
-    connect(code);
-  }, [joinInput, connect]);
+    joinChannel(code, false);
+  }, [joinInput, joinChannel]);
 
-  // ── Send a move ─────────────────────────────────────────────────────────────
+  // ── Make a move ─────────────────────────────────────────────────────────────
   const handleCellClick = useCallback((i: number) => {
-    if (!myRoleRef.current || !socketRef.current) return;
-    socketRef.current.send(JSON.stringify({
-      type:   'move',
-      index:  i,
-      player: myRoleRef.current,
-    }));
+    const g = gameRef.current;
+    const role = myRoleRef.current;
+    if (!role) return;
+    if (g.turn !== role) return;
+    if (g.board[i] !== '') return;
+    if (g.winner || g.isDraw) return;
+
+    const newBoard = [...g.board];
+    newBoard[i] = role;
     if (soundEnabled) sounds.click();
+
+    const w = checkWinner(newBoard);
+    const d = !w && isDraw(newBoard);
+    const next = role === 'X' ? 'O' : 'X';
+
+    const newState: RoomState = {
+      ...g,
+      board:   newBoard,
+      turn:    next,
+      winner:  w ?? null,
+      isDraw:  d,
+    };
+
+    setGameState(newState);
+    gameRef.current = newState;
+    publish({ type: 'state', state: newState });
   }, [soundEnabled]);
 
   // ── Reset ───────────────────────────────────────────────────────────────────
   const resetGame = useCallback(() => {
-    socketRef.current?.send(JSON.stringify({ type: 'reset' }));
+    const g = gameRef.current;
+    const newState: RoomState = {
+      ...EMPTY_STATE(),
+      playerX: g.playerX,
+      playerO: g.playerO,
+    };
+    setGameState(newState);
+    gameRef.current = newState;
+    publish({ type: 'state', state: newState });
   }, []);
 
   // ── Chat ────────────────────────────────────────────────────────────────────
   const sendChat = useCallback(() => {
-    if (!chatMsg.trim() || !myRoleRef.current) return;
-    socketRef.current?.send(JSON.stringify({
-      type:   'chat',
-      text:   chatMsg.trim(),
-      player: myRoleRef.current,
-    }));
+    const role = myRoleRef.current;
+    if (!chatMsg.trim() || !role) return;
+    const g = gameRef.current;
+    const msg: ChatMsg = { text: chatMsg.trim(), player: role, ts: Date.now() };
     setChatMsg('');
+    const newState: RoomState = {
+      ...g,
+      chat: [...(g.chat || []).slice(-49), msg],
+    };
+    setGameState(newState);
+    gameRef.current = newState;
+    publish({ type: 'state', state: newState });
   }, [chatMsg]);
 
   // ── Leave ───────────────────────────────────────────────────────────────────
   const leave = useCallback(() => {
-    socketRef.current?.close();
-    socketRef.current = null;
+    detach();
     setScreen('lobby'); setMyRole(null); setRoomId('');
-    setServerState(null); setConnected(false); setError('');
+    setGameState(EMPTY_STATE()); setConnected(false); setError('');
   }, []);
 
   // ── Copy invite link ────────────────────────────────────────────────────────
@@ -215,40 +280,13 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
   }, [roomId]);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
-  const mapEmoji     = (v: string) => v === 'X' ? emojiX : v === 'O' ? emojiO : v;
-  const displayBoard = serverState ? serverState.board.map(mapEmoji) : EMPTY_BOARD;
-  const myTurn       = serverState?.turn === myRole;
-  const winner       = serverState?.winner ?? null;
-  const gameDraw     = serverState?.isDraw ?? false;
-  const opponentJoined = myRole === 'X' ? !!serverState?.playerO : !!serverState?.playerX;
+  const mapEmoji      = (v: string) => v === 'X' ? emojiX : v === 'O' ? emojiO : v;
+  const displayBoard  = gameState.board.map(mapEmoji);
+  const myTurn        = gameState.turn === myRole;
+  const winner        = gameState.winner;
+  const gameDraw      = gameState.isDraw;
+  const opponentJoined = myRole === 'X' ? !!gameState.playerO : !!gameState.playerX;
   const opponentLeft   = screen === 'game' && !opponentJoined && !winner && !gameDraw;
-
-  // ════════════════════════════════════════════════════════════════════════════
-  // DEMO BANNER (shown when PartyKit host not configured)
-  // ════════════════════════════════════════════════════════════════════════════
-  const DemoBanner = () => (
-    <div style={{
-      background: `${theme.accent}15`,
-      border: `1px solid ${theme.accent}44`,
-      borderRadius: '14px', padding: '14px 16px',
-      fontSize: '0.82rem', lineHeight: 1.7, color: theme.textMuted,
-    }}>
-      <div style={{ fontWeight: 700, color: theme.text, marginBottom: '8px', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-        <Zap size={15} style={{ color: theme.accent }} /> PartyKit Setup (3 min, free)
-      </div>
-      <ol style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-        <li>Run: <code style={{ background: theme.cellBg, padding: '1px 6px', borderRadius: '4px' }}>npx partykit deploy</code> in project root</li>
-        <li>Sign in with GitHub when prompted</li>
-        <li>Copy your deployed host URL (e.g. <code style={{ background: theme.cellBg, padding: '1px 6px', borderRadius: '4px' }}>tictactoe-pro.yourname.partykit.dev</code>)</li>
-        <li>Add to Vercel env vars:<br />
-          <code style={{ background: theme.cellBg, padding: '2px 6px', borderRadius: '4px', fontSize: '0.75rem' }}>
-            VITE_PARTYKIT_HOST=tictactoe-pro.yourname.partykit.dev
-          </code>
-        </li>
-        <li>Redeploy on Vercel — online play works! 🎉</li>
-      </ol>
-    </div>
-  );
 
   // ════════════════════════════════════════════════════════════════════════════
   // LOBBY
@@ -258,7 +296,20 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
         style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}
       >
-        {IS_DEMO && <DemoBanner />}
+        {/* Info banner */}
+        <div style={{
+          background: `${theme.accent}15`,
+          border: `1px solid ${theme.accent}44`,
+          borderRadius: '14px', padding: '12px 16px',
+          fontSize: '0.82rem', lineHeight: 1.6, color: theme.textMuted,
+          display: 'flex', alignItems: 'center', gap: '10px',
+        }}>
+          <span style={{ fontSize: '1.4rem' }}>⚡</span>
+          <span>
+            <strong style={{ color: theme.text }}>Powered by Ably.</strong>{' '}
+            Create a room, share the code with a friend, play instantly.
+          </span>
+        </div>
 
         {error && (
           <div style={{
@@ -268,24 +319,22 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
           }}>{error}</div>
         )}
 
-        <button onClick={createRoom} disabled={connecting}
-          style={{
-            background: theme.accent, border: 'none', borderRadius: '14px',
-            padding: '14px', color: '#fff', fontWeight: 700, fontSize: '1rem',
-            cursor: connecting ? 'not-allowed' : 'pointer',
-            opacity: connecting ? 0.7 : 1,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-            transition: 'opacity 0.2s',
-          }}
-        >
+        <button onClick={createRoom} disabled={connecting} style={{
+          background: theme.accent, border: 'none', borderRadius: '14px',
+          padding: '14px', color: '#fff', fontWeight: 700, fontSize: '1rem',
+          cursor: connecting ? 'not-allowed' : 'pointer',
+          opacity: connecting ? 0.7 : 1,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+          transition: 'opacity 0.2s',
+        }}>
           {connecting
             ? <><Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Connecting…</>
-            : <><Users size={18} /> Create Room (Host)</>}
+            : <><Users size={18} /> Create Room</>}
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{ flex: 1, height: '1px', background: theme.border }} />
-          <span style={{ color: theme.textMuted, fontSize: '0.8rem' }}>join existing</span>
+          <span style={{ color: theme.textMuted, fontSize: '0.8rem' }}>or join existing</span>
           <div style={{ flex: 1, height: '1px', background: theme.border }} />
         </div>
 
@@ -293,32 +342,28 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
           <input
             value={joinInput}
             onChange={e => setJoinInput(e.target.value.toUpperCase().slice(0, 6))}
-            placeholder="6-char room code…"
+            placeholder="Room code…"
             onKeyDown={e => e.key === 'Enter' && joinRoom()}
             style={{
               flex: 1, background: theme.cellBg, border: `2px solid ${theme.border}`,
               borderRadius: '12px', padding: '12px 14px', color: theme.text,
-              fontSize: '1rem', fontFamily: 'monospace', letterSpacing: '0.15em',
+              fontSize: '1rem', fontFamily: 'monospace', letterSpacing: '0.2em',
               outline: 'none', textTransform: 'uppercase',
             }}
           />
-          <button onClick={joinRoom} disabled={connecting}
-            style={{
-              background: theme.cellBg, border: `2px solid ${theme.accent}`,
-              borderRadius: '12px', padding: '12px 16px',
-              color: theme.accent, fontWeight: 700,
-              cursor: connecting ? 'not-allowed' : 'pointer',
-            }}
-          >
-            Join
-          </button>
+          <button onClick={joinRoom} disabled={connecting} style={{
+            background: theme.cellBg, border: `2px solid ${theme.accent}`,
+            borderRadius: '12px', padding: '12px 18px',
+            color: theme.accent, fontWeight: 700, fontSize: '1rem',
+            cursor: connecting ? 'not-allowed' : 'pointer',
+          }}>Join</button>
         </div>
       </motion.div>
     );
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // WAITING (host before opponent joins)
+  // WAITING
   // ════════════════════════════════════════════════════════════════════════════
   if (screen === 'waiting') {
     return (
@@ -327,39 +372,37 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
       >
         <div style={{
           background: theme.surface, border: `1px solid ${theme.border}`,
-          borderRadius: '20px', padding: '24px 20px',
+          borderRadius: '20px', padding: '28px 20px',
           backdropFilter: 'blur(12px)', textAlign: 'center',
         }}>
           <motion.div
             animate={{ rotate: 360 }}
             transition={{ repeat: Infinity, duration: 2, ease: 'linear' }}
-            style={{ fontSize: '2.2rem', marginBottom: '12px', display: 'inline-block' }}
+            style={{ fontSize: '2.4rem', marginBottom: '14px', display: 'inline-block' }}
           >⏳</motion.div>
 
-          <div style={{ color: theme.text, fontWeight: 700, fontSize: '1.05rem', marginBottom: '4px' }}>
+          <div style={{ color: theme.text, fontWeight: 700, fontSize: '1.1rem', marginBottom: '4px' }}>
             Waiting for opponent…
           </div>
-          <div style={{ color: theme.textMuted, fontSize: '0.82rem', marginBottom: '20px' }}>
-            Share the room code or invite link below
+          <div style={{ color: theme.textMuted, fontSize: '0.83rem', marginBottom: '22px' }}>
+            Share the code or link below
           </div>
 
-          {/* Big room code */}
+          {/* Room code */}
           <div style={{
-            fontFamily: 'monospace', fontSize: '2.2rem', fontWeight: 900,
+            fontFamily: 'monospace', fontSize: '2.4rem', fontWeight: 900,
             letterSpacing: '0.35em', color: theme.accent,
             background: theme.cellBg, borderRadius: '16px',
             padding: '16px 20px', marginBottom: '14px',
             border: `2px solid ${theme.accent}55`,
             textShadow: `0 0 24px ${theme.accent}66`,
-          }}>
-            {roomId}
-          </div>
+          }}>{roomId}</div>
 
-          {/* Copy invite link */}
+          {/* Copy link */}
           <button onClick={copyLink} style={{
             background: copied ? '#22c55e22' : `${theme.accent}22`,
             border: `2px solid ${copied ? '#22c55e' : theme.accent}`,
-            borderRadius: '12px', padding: '11px 18px',
+            borderRadius: '12px', padding: '12px 18px',
             cursor: 'pointer', color: copied ? '#22c55e' : theme.accent,
             fontWeight: 700, fontSize: '0.9rem',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -369,16 +412,14 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
             {copied ? 'Link Copied!' : 'Copy Invite Link'}
           </button>
 
-          {/* Connection status */}
-          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-            <div style={{
-              width: '8px', height: '8px', borderRadius: '50%',
-              background: connected ? '#22c55e' : '#f59e0b',
-              boxShadow: connected ? '0 0 6px #22c55e' : '0 0 6px #f59e0b',
-            }} />
-            <span style={{ color: theme.textMuted, fontSize: '0.78rem' }}>
-              {connected ? 'Connected to server' : 'Connecting…'}
-            </span>
+          {/* Status dot */}
+          <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px' }}>
+            <motion.div
+              animate={{ scale: [1, 1.3, 1] }}
+              transition={{ repeat: Infinity, duration: 1.2 }}
+              style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e' }}
+            />
+            <span style={{ color: theme.textMuted, fontSize: '0.78rem' }}>Connected — waiting for player 2</span>
           </div>
         </div>
 
@@ -412,7 +453,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
               {myRole === 'X' ? emojiX : emojiO} {myRole}
             </div>
           </div>
-          <div style={{ color: theme.textMuted, fontSize: '1rem', fontWeight: 700 }}>vs</div>
+          <div style={{ color: theme.textMuted, fontWeight: 700 }}>vs</div>
           <div>
             <div style={{ color: theme.textMuted, fontSize: '0.68rem', fontWeight: 600, textTransform: 'uppercase' }}>Opponent</div>
             <div style={{ color: theme.textMuted, fontSize: '1.3rem', fontWeight: 800 }}>
@@ -421,12 +462,16 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
           </div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {/* Connection dot */}
-          <div style={{
-            width: '8px', height: '8px', borderRadius: '50%',
-            background: connected ? '#22c55e' : '#ef4444',
-            boxShadow: `0 0 6px ${connected ? '#22c55e' : '#ef4444'}`,
-          }} title={connected ? 'Connected' : 'Disconnected'} />
+          <motion.div
+            animate={{ scale: [1, 1.2, 1] }}
+            transition={{ repeat: Infinity, duration: 2 }}
+            style={{
+              width: '8px', height: '8px', borderRadius: '50%',
+              background: connected ? '#22c55e' : '#ef4444',
+              boxShadow: `0 0 6px ${connected ? '#22c55e' : '#ef4444'}`,
+            }}
+            title={connected ? 'Connected' : 'Disconnected'}
+          />
           <button onClick={copyLink} title="Copy invite link" style={{
             background: theme.cellBg, border: `1px solid ${theme.border}`,
             borderRadius: '10px', padding: '8px', cursor: 'pointer',
@@ -438,9 +483,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
             background: '#ef444418', border: '1px solid #ef444440',
             borderRadius: '10px', padding: '8px',
             cursor: 'pointer', color: '#ef4444', display: 'flex',
-          }}>
-            <LogOut size={16} />
-          </button>
+          }}><LogOut size={16} /></button>
         </div>
       </div>
 
@@ -482,7 +525,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
         </motion.div>
       )}
 
-      {/* Result banner */}
+      {/* Result */}
       {(winner || gameDraw) && (
         <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
           style={{
@@ -494,10 +537,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
           <div style={{ fontSize: '2rem', marginBottom: '4px' }}>
             {winner === myRole ? '🏆' : gameDraw ? '🤝' : '💔'}
           </div>
-          <div style={{
-            color: winner === myRole ? '#22c55e' : gameDraw ? '#f59e0b' : '#ef4444',
-            fontWeight: 800, fontSize: '1.15rem',
-          }}>
+          <div style={{ color: winner === myRole ? '#22c55e' : gameDraw ? '#f59e0b' : '#ef4444', fontWeight: 800, fontSize: '1.15rem' }}>
             {winner === myRole ? 'You Win!' : gameDraw ? "It's a Draw!" : 'You Lose!'}
           </div>
           <button onClick={resetGame} style={{
@@ -537,7 +577,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
         fontWeight: 600, fontSize: '0.85rem', transition: 'all 0.2s',
       }}>
         <MessageCircle size={16} />
-        Chat {serverState?.chat?.length ? `(${serverState.chat.length})` : ''}
+        Chat {gameState.chat?.length ? `(${gameState.chat.length})` : ''}
       </button>
 
       {/* Chat panel */}
@@ -554,12 +594,12 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
                 height: '160px', overflowY: 'auto', padding: '12px',
                 display: 'flex', flexDirection: 'column', gap: '6px',
               }}>
-                {!serverState?.chat?.length && (
+                {!gameState.chat?.length && (
                   <div style={{ color: theme.textMuted, fontSize: '0.8rem', textAlign: 'center', marginTop: '50px' }}>
                     No messages yet
                   </div>
                 )}
-                {serverState?.chat?.map((msg, i) => (
+                {gameState.chat?.map((msg, i) => (
                   <div key={i} style={{
                     alignSelf: msg.player === myRole ? 'flex-end' : 'flex-start',
                     background: msg.player === myRole ? theme.accent : theme.cellBg,
@@ -575,10 +615,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
                 ))}
                 <div ref={chatEndRef} />
               </div>
-              <div style={{
-                borderTop: `1px solid ${theme.border}`, padding: '10px',
-                display: 'flex', gap: '8px',
-              }}>
+              <div style={{ borderTop: `1px solid ${theme.border}`, padding: '10px', display: 'flex', gap: '8px' }}>
                 <input
                   value={chatMsg}
                   onChange={e => setChatMsg(e.target.value)}
@@ -594,9 +631,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
                 <button onClick={sendChat} style={{
                   background: theme.accent, border: 'none', borderRadius: '8px',
                   padding: '8px 12px', cursor: 'pointer', color: '#fff', display: 'flex',
-                }}>
-                  <Send size={14} />
-                </button>
+                }}><Send size={14} /></button>
               </div>
             </div>
           </motion.div>
