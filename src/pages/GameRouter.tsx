@@ -1,8 +1,6 @@
 import React from 'react';
 import { useParams, Navigate } from 'react-router-dom';
-import { User } from '../lib/auth';
 
-// Lazy-ish imports — all games
 import TicTacToe from './TicTacToePage';
 import Connect4 from '../games/Connect4';
 import Snake from '../games/Snake';
@@ -26,8 +24,6 @@ import Dino from '../games/Dino';
 import Breakout from '../games/Breakout';
 import Sliding from '../games/Sliding';
 import Asteroids from '../games/Asteroids';
-
-interface Props { user: User | null; }
 
 const GAME_MAP: Record<string, React.ComponentType<any>> = {
   tictactoe: TicTacToe,
@@ -55,9 +51,9 @@ const GAME_MAP: Record<string, React.ComponentType<any>> = {
   asteroids: Asteroids,
 };
 
-export default function GameRouter({ user }: Props) {
+export default function GameRouter() {
   const { gameId } = useParams<{ gameId: string }>();
   const Component = gameId ? GAME_MAP[gameId] : null;
   if (!Component) return <Navigate to="/" replace />;
-  return <Component user={user} />;
+  return <Component />;
 }
