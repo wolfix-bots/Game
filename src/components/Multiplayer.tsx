@@ -186,7 +186,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
     } catch (e: any) {
       setConnecting(false);
       setConnected(false);
-      setError('Connection failed. Check your Ably key.');
+      setError('Connection failed. Please try again.');
     }
   }, [soundEnabled]);
 
@@ -304,9 +304,8 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
           fontSize: '0.82rem', lineHeight: 1.6, color: theme.textMuted,
           display: 'flex', alignItems: 'center', gap: '10px',
         }}>
-          <span style={{ fontSize: '1.4rem' }}>⚡</span>
-          <span>
-            <strong style={{ color: theme.text }}>Powered by Ably.</strong>{' '}
+          <span style={{ fontSize: '1.4rem' }}>🦊</span>
+          <span style={{ color: theme.textMuted }}>
             Create a room, share the code with a friend, play instantly.
           </span>
         </div>
