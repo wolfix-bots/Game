@@ -2,7 +2,11 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { Search, Gamepad2, LogOut, Trophy, TrendingUp, User } from 'lucide-react';
-import { GAMES, TAGS, GameDef } from '../lib/arcade';
+import { GAMES, GameDef } from '../lib/arcade';
+import Leaderboard from '../components/Leaderboard';
+import { THEMES } from '../lib/themes';
+
+const TAGS = ['all','🔥 hot','classic','arcade','puzzle','strategy','ai','word','card','memory'];
 import { ThemeConfig } from '../lib/themes';
 import { User as UserType, logout } from '../lib/auth';
 import UserMenu from '../components/UserMenu';
@@ -17,10 +21,12 @@ interface Props {
 export default function ArcadeHub({ theme: t, user, onLogout, onAvatarChange }: Props) {
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState('all');
+  const [lbOpen, setLbOpen] = useState(false);
   const nav = useNavigate();
 
   const filtered = GAMES.filter(g => {
-    const matchTag = activeTag === 'all' || g.tags.includes(activeTag) || (activeTag === 'hot' && g.hot);
+    const tagKey = activeTag.replace('🔥 ','');
+    const matchTag = activeTag === 'all' || g.tags.includes(tagKey) || (tagKey === 'hot' && g.hot);
     const matchSearch = !search || g.title.toLowerCase().includes(search.toLowerCase()) || g.description.toLowerCase().includes(search.toLowerCase());
     return matchTag && matchSearch;
   });
@@ -61,9 +67,12 @@ export default function ArcadeHub({ theme: t, user, onLogout, onAvatarChange }: 
           <h1 style={{ color: t.text, fontWeight: 900, fontSize: 'clamp(1.8rem,5vw,3rem)', margin: '0 0 8px', letterSpacing: '-0.03em' }}>
             {user ? `Welcome back, ${user.avatar} ${user.username}!` : 'Choose Your Game'}
           </h1>
-          <p style={{ color: t.textMuted, fontSize: 'clamp(0.9rem,2vw,1.1rem)', margin: 0 }}>
+          <p style={{ color: t.textMuted, fontSize: 'clamp(0.9rem,2vw,1.1rem)', margin: 0, marginBottom: '12px' }}>
             {GAMES.length} games · Single player, local & online multiplayer
           </p>
+          <button onClick={() => setLbOpen(true)} style={{ background: '#fbbf2422', border: '2px solid #fbbf2444', borderRadius: '14px', padding: '8px 20px', color: '#fbbf24', fontWeight: 700, cursor: 'pointer', fontFamily: 'Outfit,sans-serif', fontSize: '0.88rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            🏆 Global Leaderboard
+          </button>
         </motion.div>
 
         {/* Search */}
@@ -115,6 +124,8 @@ export default function ArcadeHub({ theme: t, user, onLogout, onAvatarChange }: 
             ))}
           </AnimatePresence>
         </div>
+
+      <Leaderboard open={lbOpen} onClose={() => setLbOpen(false)} theme={t} />
 
         {filtered.length === 0 && (
           <div style={{ textAlign: 'center', padding: '60px 20px', color: t.textMuted }}>
