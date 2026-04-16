@@ -1,124 +1,101 @@
 import React, { useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import GameShell from '../components/GameShell';
 
-// Minimal puzzle bank (puzzle, solution pairs)
-const PUZZLES = [
-  { p: '530070000600195000098000060800060003400803001700020006060000280000419005000080079', s: '534678912672195348198342567859761423426853791713924856961537284287419635345286179' },
-  { p: '800000000003600000070090200060005030004000800030070060020060001500008400000000068', s: '812753649943682175675491283168945327254367891397128564289674531531289746426531987' },
-  { p: '000000000000003085001020000000507000004000100090000000500000073002010000000040009', s: '987654321246173985351928746128537694634892157795461832519286473472319568863745219' },
-];
-
 type Grid = (number|null)[][];
-type Fixed = boolean[][];
 
-function parseGrid(s: string): Grid {
-  return Array(9).fill(null).map((_, r) =>
-    Array(9).fill(null).map((__, c) => { const v = Number(s[r*9+c]); return v || null; })
-  );
-}
-
-function isValid(grid: Grid, r: number, c: number, val: number): boolean {
-  for (let i = 0; i < 9; i++) {
-    if (grid[r][i] === val || grid[i][c] === val) return false;
-  }
-  const br = Math.floor(r/3)*3, bc = Math.floor(c/3)*3;
-  for (let dr = 0; dr < 3; dr++) for (let dc = 0; dc < 3; dc++) if (grid[br+dr][bc+dc] === val) return false;
-  return true;
-}
-
-function isSolved(grid: Grid, solution: string): boolean {
-  return grid.flat().every((v, i) => v === Number(solution[i]));
-}
+const PUZZLES: { easy: [Grid,Grid], medium: [Grid,Grid], hard: [Grid,Grid] } = {
+  easy: [
+    [[5,3,null,null,7,null,null,null,null],[6,null,null,1,9,5,null,null,null],[null,9,8,null,null,null,null,6,null],[8,null,null,null,6,null,null,null,3],[4,null,null,8,null,3,null,null,1],[7,null,null,null,2,null,null,null,6],[null,6,null,null,null,null,2,8,null],[null,null,null,4,1,9,null,null,5],[null,null,null,null,8,null,null,7,9]],
+    [[5,3,4,6,7,8,9,1,2],[6,7,2,1,9,5,3,4,8],[1,9,8,3,4,2,5,6,7],[8,5,9,7,6,1,4,2,3],[4,2,6,8,5,3,7,9,1],[7,1,3,9,2,4,8,5,6],[9,6,1,5,3,7,2,8,4],[2,8,7,4,1,9,6,3,5],[3,4,5,2,8,6,1,7,9]]
+  ],
+  medium: [
+    [[null,null,null,2,6,null,7,null,1],[6,8,null,null,7,null,null,9,null],[1,9,null,null,null,4,5,null,null],[8,2,null,1,null,null,null,4,null],[null,null,4,6,null,2,9,null,null],[null,5,null,null,null,3,null,2,8],[null,null,9,3,null,null,null,7,4],[null,4,null,null,5,null,null,3,6],[7,null,3,null,1,8,null,null,null]],
+    [[4,3,5,2,6,9,7,8,1],[6,8,2,5,7,1,4,9,3],[1,9,7,8,3,4,5,6,2],[8,2,6,1,9,5,3,4,7],[3,7,4,6,8,2,9,1,5],[9,5,1,7,4,3,6,2,8],[5,1,9,3,2,6,8,7,4],[2,4,8,9,5,7,1,3,6],[7,6,3,4,1,8,2,5,9]]
+  ],
+  hard: [
+    [[null,2,null,null,null,null,null,null,null],[null,null,null,6,null,null,null,null,3],[null,7,4,null,8,null,null,null,null],[null,null,null,null,null,3,null,null,2],[null,8,null,null,4,null,null,1,null],[6,null,null,5,null,null,null,null,null],[null,null,null,null,1,null,7,8,null],[5,null,null,null,null,9,null,null,null],[null,null,null,null,null,null,null,4,null]],
+    [[1,2,6,4,3,7,9,5,8],[8,9,5,6,2,1,4,7,3],[3,7,4,9,8,5,1,2,6],[4,5,7,1,9,3,8,6,2],[9,8,3,2,4,6,5,1,7],[6,1,2,5,7,8,3,9,4],[2,6,9,3,1,4,7,8,5],[5,4,8,7,6,9,2,3,1],[7,3,1,8,5,2,6,4,9]]
+  ],
+};
 
 export default function Sudoku() {
-  const [puzzleIdx, setPuzzleIdx] = useState(0);
   const [diff, setDiff] = useState<'easy'|'medium'|'hard'>('easy');
-  const [grid, setGrid] = useState<Grid>(() => parseGrid(PUZZLES[0].p));
-  const [fixed, setFixed] = useState<Fixed>(() => parseGrid(PUZZLES[0].p).map(row => row.map(v => v !== null)));
+  const [grid, setGrid] = useState<Grid>(() => PUZZLES.easy[0].map(r => [...r]));
+  const [solution] = useState<Grid[]>([PUZZLES.easy[1]]);
   const [selected, setSelected] = useState<[number,number]|null>(null);
   const [errors, setErrors] = useState<Set<string>>(new Set());
   const [solved, setSolved] = useState(false);
-  const [mistakes, setMistakes] = useState(0);
+  const initial = PUZZLES[diff][0];
 
-  const loadPuzzle = (idx: number) => {
-    const { p } = PUZZLES[idx % PUZZLES.length];
-    const g = parseGrid(p);
-    setGrid(g); setFixed(g.map(row => row.map(v => v !== null)));
-    setSelected(null); setErrors(new Set()); setSolved(false); setMistakes(0); setPuzzleIdx(idx);
+  const reset = (d = diff) => {
+    setGrid(PUZZLES[d][0].map(r => [...r]));
+    setSelected(null); setErrors(new Set()); setSolved(false);
   };
 
-  const input = useCallback((val: number | null) => {
-    if (!selected || solved) return;
-    const [r, c] = selected;
-    if (fixed[r][c]) return;
-    const ng = grid.map(row => [...row]) as Grid;
+  const input = (val: number|null) => {
+    if (!selected) return;
+    const [r,c] = selected;
+    if (initial[r][c] !== null) return;
+    const ng = grid.map(row => [...row]);
     ng[r][c] = val;
-    const ne = new Set(errors);
-    const key = `${r}-${c}`;
-    if (val && !isValid(ng.map((row,ri) => row.map((v,ci) => (ri===r&&ci===c)?null:v)), r, c, val)) {
-      ne.add(key); setMistakes(m => m + 1);
-    } else { ne.delete(key); }
-    setErrors(ne); setGrid(ng);
-    if (isSolved(ng, PUZZLES[puzzleIdx % PUZZLES.length].s)) setSolved(true);
-  }, [selected, fixed, grid, errors, solved, puzzleIdx]);
-
-  const hint = () => {
-    if (!selected || solved) return;
-    const [r, c] = selected; if (fixed[r][c]) return;
-    const correct = Number(PUZZLES[puzzleIdx % PUZZLES.length].s[r*9+c]);
-    const ng = grid.map(row => [...row]) as Grid; ng[r][c] = correct;
-    const ne = new Set(errors); ne.delete(`${r}-${c}`);
-    setErrors(ne); setGrid(ng);
-    if (isSolved(ng, PUZZLES[puzzleIdx % PUZZLES.length].s)) setSolved(true);
-  };
-
-  const cellColor = (r: number, c: number) => {
-    if (selected && selected[0]===r && selected[1]===c) return '#6366f133';
-    if (errors.has(`${r}-${c}`)) return '#ef444422';
-    if (selected) {
-      const [sr,sc]=selected;
-      if (sr===r||sc===c||( Math.floor(sr/3)===Math.floor(r/3)&&Math.floor(sc/3)===Math.floor(c/3))) return '#1e293b';
+    setGrid(ng);
+    // Check errors
+    const ne = new Set<string>();
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 9; j++) {
+      if (ng[i][j] !== null && PUZZLES[d][1][i][j] !== ng[i][j]) ne.add(`${i}-${j}`);
     }
-    return '#0f172a';
+    setErrors(ne);
+    if (ne.size === 0 && ng.every(row => row.every(v => v !== null))) setSolved(true);
   };
+
+  const d = diff;
 
   return (
-    <GameShell title="Sudoku" emoji="🔢" onReset={() => loadPuzzle(Math.floor(Math.random()*PUZZLES.length))} scores={[
-      { label: 'Mistakes', value: mistakes, color: '#ef4444' },
-      { label: solved ? 'Solved! ✓' : 'In Progress', value: '', color: solved ? '#22c55e' : '#94a3b8' },
-    ]}>
-      {solved && <motion.div initial={{ scale:0.8 }} animate={{ scale:1 }} style={{ color:'#22c55e', fontWeight:800, fontSize:'1.2rem', textAlign:'center' }}>🎉 Puzzle Solved!</motion.div>}
-
-      {/* Grid */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(9,1fr)', gap:0, border:'2px solid #475569', borderRadius:'8px', overflow:'hidden', maxWidth:'360px', width:'100%' }}>
-        {grid.map((row, r) => row.map((val, c) => (
-          <div key={`${r}-${c}`} onClick={() => setSelected([r,c])}
-            style={{
-              width:'100%', aspectRatio:'1/1', display:'flex', alignItems:'center', justifyContent:'center',
-              background: cellColor(r,c),
-              borderRight: c%3===2&&c<8 ? '2px solid #475569' : '1px solid #1e293b',
-              borderBottom: r%3===2&&r<8 ? '2px solid #475569' : '1px solid #1e293b',
-              cursor:'pointer', fontSize:'clamp(0.7rem,2.5vw,1rem)', fontWeight:700,
-              color: errors.has(`${r}-${c}`) ? '#ef4444' : fixed[r][c] ? '#e2e8f0' : '#818cf8',
-              transition:'background 0.1s',
-            }}
-          >{val || ''}</div>
-        )))}
-      </div>
-
-      {/* Number pad */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:'8px', maxWidth:'280px', width:'100%' }}>
-        {[1,2,3,4,5,6,7,8,9,0].map(n => (
-          <button key={n} onClick={() => input(n===0?null:n)}
-            style={{ height:44, borderRadius:'10px', border:'1px solid #334155', background:'#1e293b', color:n===0?'#ef4444':'#e2e8f0', fontWeight:700, fontSize:'1rem', cursor:'pointer', fontFamily:'Outfit,sans-serif' }}
-          >{n===0?'✕':n}</button>
+    <GameShell title="Sudoku" emoji="🔢" onReset={() => reset()} scores={[{ label: 'Errors', value: errors.size, color: errors.size > 0 ? '#ef4444' : '#22c55e' }]}>
+      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '14px' }}>
+        {(['easy','medium','hard'] as const).map(dv => (
+          <button key={dv} onClick={() => { setDiff(dv); reset(dv); }}
+            style={{ padding: '5px 14px', borderRadius: '20px', border: '2px solid', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem', fontFamily: 'Outfit,sans-serif', textTransform: 'capitalize',
+              borderColor: diff === dv ? '#34d399' : '#334155', background: diff === dv ? '#34d39922' : 'transparent', color: diff === dv ? '#34d399' : '#94a3b8' }}
+          >{dv}</button>
         ))}
       </div>
-
-      <div style={{ display:'flex', gap:'8px' }}>
-        <button onClick={hint} style={{ padding:'8px 16px', borderRadius:'10px', border:'1px solid #334155', background:'#1e293b', color:'#fbbf24', fontWeight:600, cursor:'pointer', fontSize:'0.85rem', fontFamily:'Outfit,sans-serif' }}>💡 Hint</button>
-        <button onClick={() => loadPuzzle(puzzleIdx+1)} style={{ padding:'8px 16px', borderRadius:'10px', border:'1px solid #334155', background:'#1e293b', color:'#94a3b8', fontWeight:600, cursor:'pointer', fontSize:'0.85rem', fontFamily:'Outfit,sans-serif' }}>Next Puzzle →</button>
+      {solved && <div style={{ textAlign: 'center', color: '#22c55e', fontWeight: 800, fontSize: '1.1rem', marginBottom: '10px' }}>🎉 Solved!</div>}
+      <div style={{ display: 'flex', border: '3px solid #475569', borderRadius: '8px', overflow: 'hidden', margin: '0 auto' }}>
+        <div>
+          {grid.map((row, r) => (
+            <div key={r} style={{ display: 'flex', borderBottom: (r+1)%3===0&&r<8 ? '3px solid #475569' : '1px solid #1e293b' }}>
+              {row.map((cell, c) => {
+                const isInit = initial[r][c] !== null;
+                const isSel = selected?.[0]===r && selected?.[1]===c;
+                const isErr = errors.has(`${r}-${c}`);
+                const sameNum = selected && grid[selected[0]][selected[1]] && cell === grid[selected[0]][selected[1]];
+                return (
+                  <div key={c} onClick={() => !isInit && setSelected([r,c])}
+                    style={{ width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      borderRight: (c+1)%3===0&&c<8 ? '3px solid #475569' : '1px solid #1e293b',
+                      background: isSel ? '#3b82f622' : isErr ? '#ef444422' : sameNum ? '#3b82f611' : '#1e293b',
+                      color: isErr ? '#ef4444' : isInit ? '#e2e8f0' : '#60a5fa',
+                      fontWeight: isInit ? 700 : 500, fontSize: '1rem', cursor: isInit ? 'default' : 'pointer',
+                      outline: isSel ? '2px solid #3b82f6' : 'none',
+                    }}
+                  >{cell || ''}</div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Number pad */}
+      <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', marginTop: '14px', flexWrap: 'wrap' }}>
+        {[1,2,3,4,5,6,7,8,9].map(n => (
+          <button key={n} onClick={() => input(n)}
+            style={{ width: 36, height: 36, borderRadius: '8px', border: '1px solid #334155', background: '#1e293b', color: '#60a5fa', fontWeight: 800, fontSize: '1rem', cursor: 'pointer', fontFamily: 'Outfit,sans-serif' }}
+          >{n}</button>
+        ))}
+        <button onClick={() => input(null)}
+          style={{ width: 36, height: 36, borderRadius: '8px', border: '1px solid #334155', background: '#1e293b', color: '#ef4444', fontWeight: 800, fontSize: '1rem', cursor: 'pointer', fontFamily: 'Outfit,sans-serif' }}
+        >✕</button>
       </div>
     </GameShell>
   );
