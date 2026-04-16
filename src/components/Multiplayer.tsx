@@ -5,7 +5,15 @@ import {
   WifiOff, RefreshCw, Link, Loader2, LogOut,
 } from 'lucide-react';
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { supabase, RoomRow } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+
+interface RoomRow {
+  id: string; board: string[]; turn: string;
+  player_x: string | null; player_o: string | null;
+  winner: string | null; is_draw: boolean;
+  chat: { text: string; player: string; ts: number }[];
+  updated_at: string;
+}
 import { ThemeConfig } from '../lib/themes';
 import { checkWinner, isDraw } from '../lib/AI';
 import GameBoard from './GameBoard';
@@ -297,7 +305,7 @@ export default function Multiplayer({ theme, emojiX, emojiO, soundEnabled }: Mul
             <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: '14px', overflow: 'hidden', backdropFilter: 'blur(12px)' }}>
               <div style={{ height: '160px', overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {!room?.chat?.length && <div style={{ color: t.textMuted, fontSize: '0.8rem', textAlign: 'center', marginTop: '50px' }}>No messages yet</div>}
-                {room?.chat?.map((msg, i) => (
+                {room?.chat?.map((msg: any, i: number) => (
                   <div key={i} style={{ alignSelf: msg.player === myRole ? 'flex-end' : 'flex-start', background: msg.player === myRole ? t.accent : t.cellBg, color: msg.player === myRole ? '#fff' : t.text, borderRadius: '10px', padding: '6px 10px', fontSize: '0.82rem', maxWidth: '80%' }}>
                     <span style={{ opacity: 0.7, fontSize: '0.7rem' }}>{msg.player === myRole ? 'You' : 'Opp'}: </span>{msg.text}
                   </div>

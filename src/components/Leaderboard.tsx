@@ -1,25 +1,41 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Trophy, Medal } from 'lucide-react';
+import { X, Trophy, Zap, Gamepad2, Loader2 } from 'lucide-react';
 import { ThemeConfig } from '../lib/themes';
-import { getLeaderboard, getGlobalLeaderboard } from '../lib/leaderboard';
+import { getGameLeaderboard, getXPLeaderboard, LeaderboardEntry } from '../lib/leaderboard';
 import { GAMES } from '../lib/arcade';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   theme: ThemeConfig;
-  gameId?: string; // if provided, show game-specific; else global
+  gameId?: string;
 }
 
 const MEDAL = ['🥇', '🥈', '🥉'];
 
 export default function Leaderboard({ open, onClose, theme: t, gameId }: Props) {
-  const [tab, setTab] = useState<'game' | 'global'>(gameId ? 'game' : 'global');
-
-  const gameEntries = gameId ? getLeaderboard(gameId) : [];
-  const globalEntries = getGlobalLeaderboard().slice(0, 50);
+  const [tab, setTab] = useState<'game' | 'xp'>(gameId ? 'game' : 'xp');
+  const [gameEntries, setGameEntries] = useState<LeaderboardEntry[]>([]);
+  const [xpEntries, setXpEntries] = useState<{ rank:number; userId:string; username:string; avatar:string; xp:number; level:number; gamesWon:number }[]>([]);
+  const [loading, setLoading] = useState(false);
   const gameTitle = GAMES.find(g => g.id === gameId)?.title || 'Game';
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    const load = async () => {
+      if (tab === 'game' && gameId) {
+        const data = await getGameLeaderboard(gameId);
+        setGameEntries(data);
+      } else {
+        const data = await getXPLeaderboard();
+        setXpEntries(data);
+      }
+      setLoading(false);
+    };
+    load();
+  }, [open, tab, gameId]);
 
   return (
     <AnimatePresence>
@@ -32,7 +48,7 @@ export default function Leaderboard({ open, onClose, theme: t, gameId }: Props) 
           <motion.div
             initial={{ scale: 0.85, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.85, opacity: 0, y: 20 }}
             transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-            style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '420px', backdropFilter: 'blur(20px)', boxShadow: t.shadow, maxHeight: '85vh', overflowY: 'auto' }}
+            style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '440px', backdropFilter: 'blur(20px)', boxShadow: t.shadow, maxHeight: '85vh', overflowY: 'auto' }}
           >
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -46,45 +62,77 @@ export default function Leaderboard({ open, onClose, theme: t, gameId }: Props) 
             </div>
 
             {/* Tabs */}
-            {gameId && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: t.cellBg, borderRadius: '12px', padding: '4px', gap: '4px', marginBottom: '16px' }}>
-                {([['game', gameTitle], ['global', '🌍 Global']] as const).map(([key, label]) => (
-                  <button key={key} onClick={() => setTab(key)}
-                    style={{ background: tab === key ? t.accent : 'transparent', border: 'none', borderRadius: '8px', padding: '8px', cursor: 'pointer', color: tab === key ? '#fff' : t.textMuted, fontWeight: 700, fontSize: '0.82rem', fontFamily: 'Outfit,sans-serif' }}
-                  >{label}</button>
-                ))}
-              </div>
-            )}
+            <div style={{ display: 'grid', gridTemplateColumns: gameId ? '1fr 1fr' : '1fr', background: t.cellBg, borderRadius: '12px', padding: '4px', gap: '4px', marginBottom: '18px' }}>
+              {gameId && (
+                <button onClick={() => setTab('game')}
+                  style={{ background: tab === 'game' ? t.accent : 'transparent', border: 'none', borderRadius: '8px', padding: '8px', cursor: 'pointer', color: tab === 'game' ? '#fff' : t.textMuted, fontWeight: 700, fontSize: '0.82rem', fontFamily: 'Outfit,sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
+                >
+                  <Gamepad2 size={14} /> {gameTitle}
+                </button>
+              )}
+              <button onClick={() => setTab('xp')}
+                style={{ background: tab === 'xp' ? t.accent : 'transparent', border: 'none', borderRadius: '8px', padding: '8px', cursor: 'pointer', color: tab === 'xp' ? '#fff' : t.textMuted, fontWeight: 700, fontSize: '0.82rem', fontFamily: 'Outfit,sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
+              >
+                <Zap size={14} /> XP Rankings
+              </button>
+            </div>
 
-            {/* Entries */}
-            {(tab === 'game' ? gameEntries : globalEntries).length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px 20px', color: t.textMuted }}>
-                <div style={{ fontSize: '3rem', marginBottom: '12px' }}>🏆</div>
-                <div style={{ fontWeight: 700 }}>No scores yet!</div>
-                <div style={{ fontSize: '0.82rem', marginTop: '6px' }}>Play a game to get on the board</div>
+            {/* Content */}
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: '40px', color: t.textMuted }}>
+                <Loader2 size={24} style={{ animation: 'spin 0.8s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+                Loading…
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {(tab === 'game' ? gameEntries : globalEntries).map((entry, i) => {
-                  const e = tab === 'game' ? entry as any : (entry as any).entry;
-                  const gId = tab === 'global' ? (entry as any).gameId : gameId;
-                  const game = GAMES.find(g => g.id === gId);
-                  return (
-                    <motion.div key={i}
-                      initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}
-                      style={{ background: i === 0 ? `${t.accent}22` : t.cellBg, border: `1px solid ${i === 0 ? t.accent + '44' : t.border}`, borderRadius: '14px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}
+            ) : tab === 'game' && gameId ? (
+              gameEntries.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: t.textMuted }}>
+                  <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>🏆</div>
+                  <div style={{ fontWeight: 700 }}>No scores yet</div>
+                  <div style={{ fontSize: '0.82rem', marginTop: '4px' }}>Be the first to set a record!</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {gameEntries.map((entry, i) => (
+                    <motion.div key={entry.userId} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}
+                      style={{ background: i < 3 ? `${['#fbbf24','#94a3b8','#fb923c'][i]}18` : t.cellBg, border: `1px solid ${i < 3 ? ['#fbbf24','#94a3b8','#fb923c'][i] + '44' : t.border}`, borderRadius: '14px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}
                     >
-                      <div style={{ fontSize: '1.4rem', width: '28px', textAlign: 'center' }}>{MEDAL[i] || `#${i + 1}`}</div>
-                      <div style={{ fontSize: '1.4rem' }}>{e.avatar}</div>
+                      <span style={{ fontSize: '1.3rem', minWidth: '28px', textAlign: 'center' }}>{MEDAL[i] || `#${i + 1}`}</span>
+                      <span style={{ fontSize: '1.5rem' }}>{entry.avatar}</span>
                       <div style={{ flex: 1 }}>
-                        <div style={{ color: t.text, fontWeight: 700, fontSize: '0.9rem' }}>{e.username}</div>
-                        {tab === 'global' && game && <div style={{ color: t.textMuted, fontSize: '0.72rem' }}>{game.emoji} {game.title}</div>}
+                        <div style={{ color: t.text, fontWeight: 700, fontSize: '0.9rem' }}>{entry.username}</div>
+                        <div style={{ color: t.textMuted, fontSize: '0.72rem' }}>{new Date(entry.date).toLocaleDateString()}</div>
                       </div>
-                      <div style={{ color: '#fbbf24', fontWeight: 900, fontSize: '1.1rem' }}>{e.score.toLocaleString()}</div>
+                      <div style={{ color: '#fbbf24', fontWeight: 900, fontSize: '1.1rem' }}>{entry.score.toLocaleString()}</div>
                     </motion.div>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              xpEntries.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px', color: t.textMuted }}>
+                  <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>⚡</div>
+                  <div style={{ fontWeight: 700 }}>No players yet</div>
+                  <div style={{ fontSize: '0.82rem', marginTop: '4px' }}>Play games to earn XP!</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {xpEntries.map((entry, i) => (
+                    <motion.div key={entry.userId} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}
+                      style={{ background: i < 3 ? `${['#fbbf24','#94a3b8','#fb923c'][i]}18` : t.cellBg, border: `1px solid ${i < 3 ? ['#fbbf24','#94a3b8','#fb923c'][i] + '44' : t.border}`, borderRadius: '14px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px' }}
+                    >
+                      <span style={{ fontSize: '1.3rem', minWidth: '28px', textAlign: 'center' }}>{MEDAL[i] || `#${i + 1}`}</span>
+                      <span style={{ fontSize: '1.5rem' }}>{entry.avatar}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ color: t.text, fontWeight: 700, fontSize: '0.9rem' }}>{entry.username}</div>
+                        <div style={{ color: t.textMuted, fontSize: '0.72rem' }}>Level {entry.level} · {entry.gamesWon} wins</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: t.accent, fontWeight: 900, fontSize: '1rem' }}>
+                        <Zap size={14} />{entry.xp.toLocaleString()}
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )
             )}
           </motion.div>
         </motion.div>
