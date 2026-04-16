@@ -1,99 +1,134 @@
 import React, { useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import GameShell from '../components/GameShell';
 
-const SIZE = 10;
 type Cell = 'empty'|'ship'|'hit'|'miss';
+const SIZE = 10;
 const SHIPS = [5,4,3,3,2];
 
-function placeShips(): Cell[][] {
+function placeShipsRandom(): Cell[][] {
   const grid: Cell[][] = Array(SIZE).fill(null).map(()=>Array(SIZE).fill('empty'));
   for (const len of SHIPS) {
     let placed = false;
     while (!placed) {
       const horiz = Math.random()>0.5;
-      const r = Math.floor(Math.random()*(horiz?SIZE:SIZE-len+1));
-      const c = Math.floor(Math.random()*(horiz?SIZE-len+1:SIZE));
-      let ok = true;
-      for (let i=0;i<len;i++) { const nr=horiz?r:r+i; const nc=horiz?c+i:c; if(grid[nr][nc]!=='empty'){ok=false;break;} }
-      if (ok) { for(let i=0;i<len;i++){const nr=horiz?r:r+i;const nc=horiz?c+i:c;grid[nr][nc]='ship';} placed=true; }
+      const r = Math.floor(Math.random()*(SIZE-(horiz?0:len)));
+      const c = Math.floor(Math.random()*(SIZE-(horiz?len:0)));
+      const cells: [number,number][] = Array(len).fill(0).map((_,i)=>horiz?[r,c+i]:[r+i,c]);
+      if (cells.every(([cr,cc])=>grid[cr][cc]==='empty')) {
+        cells.forEach(([cr,cc])=>grid[cr][cc]='ship');
+        placed=true;
+      }
     }
   }
   return grid;
 }
 
+function aiShot(grid: Cell[][]): [number,number] {
+  const hits: [number,number][] = [];
+  grid.forEach((row,r)=>row.forEach((c,ci)=>{ if(c==='hit') hits.push([r,ci]); }));
+  if (hits.length) {
+    const [hr,hc] = hits[hits.length-1];
+    const adj: [number,number][] = [[hr-1,hc],[hr+1,hc],[hr,hc-1],[hr,hc+1]];
+    const valid = adj.filter(([r,c])=>r>=0&&r<SIZE&&c>=0&&c<SIZE&&grid[r][c]!=='hit'&&grid[r][c]!=='miss');
+    if (valid.length) return valid[Math.floor(Math.random()*valid.length)];
+  }
+  const empty: [number,number][] = [];
+  grid.forEach((row,r)=>row.forEach((c,ci)=>{ if(c!=='hit'&&c!=='miss') empty.push([r,ci]); }));
+  return empty[Math.floor(Math.random()*empty.length)];
+}
+
 export default function Battleship() {
-  const [playerGrid, setPlayerGrid] = useState<Cell[][]>(placeShips);
-  const [aiGrid, setAiGrid] = useState<Cell[][]>(placeShips);
-  const [phase, setPhase] = useState<'play'|'over'>('play');
+  const [phase, setPhase] = useState<'setup'|'play'|'over'>('setup');
+  const [player, setPlayer] = useState<Cell[][]>(()=>placeShipsRandom());
+  const [enemy, setEnemy] = useState<Cell[][]>(()=>placeShipsRandom());
+  const [playerView, setPlayerView] = useState<Cell[][]>(()=>Array(SIZE).fill(null).map(()=>Array(SIZE).fill('empty')));
   const [winner, setWinner] = useState<'player'|'ai'|null>(null);
-  const [aiShots, setAiShots] = useState<Set<string>>(new Set());
-  const [scores, setScores] = useState({player:0,ai:0});
-  const [lastHit, setLastHit] = useState<string|null>(null);
+  const [scores, setScores] = useState({wins:0,losses:0});
+  const [aiThinking, setAiThinking] = useState(false);
 
-  const countHits = (grid:Cell[][]) => grid.flat().filter(c=>c==='hit').length;
-  const totalShip = SHIPS.reduce((a,b)=>a+b,0);
+  const countShips = (g: Cell[][]) => g.flat().filter(c=>c==='ship').length;
 
-  const shoot = useCallback((r:number,c:number) => {
-    if (phase!=='play' || aiGrid[r][c]==='hit' || aiGrid[r][c]==='miss') return;
-    const ng = aiGrid.map(row=>[...row] as Cell[]);
-    const hit = ng[r][c]==='ship';
-    ng[r][c] = hit?'hit':'miss';
-    setAiGrid(ng);
-    setLastHit(hit?`${r}-${c}`:null);
-    if (countHits(ng)===totalShip) { setPhase('over'); setWinner('player'); setScores(s=>({...s,player:s.player+1})); return; }
-    // AI turn
+  const shoot = useCallback((r: number, c: number) => {
+    if (phase!=='play'||aiThinking) return;
+    const cell = enemy[r][c];
+    if (cell==='hit'||cell==='miss') return;
+    const ne = enemy.map(row=>[...row]);
+    const npv = playerView.map(row=>[...row]);
+    ne[r][c] = cell==='ship'?'hit':'miss';
+    npv[r][c] = ne[r][c];
+    setEnemy(ne); setPlayerView(npv);
+    if (!countShips(ne)) { setWinner('player'); setScores(s=>({...s,wins:s.wins+1})); setPhase('over'); return; }
+    setAiThinking(true);
     setTimeout(()=>{
-      setPlayerGrid(prev=>{
-        const pg = prev.map(row=>[...row] as Cell[]);
-        const shots = new Set(aiShots);
-        let ar:number, ac:number;
-        do { ar=Math.floor(Math.random()*SIZE); ac=Math.floor(Math.random()*SIZE); } while(shots.has(`${ar}-${ac}`));
-        shots.add(`${ar}-${ac}`);
-        const aiHit = pg[ar][ac]==='ship';
-        pg[ar][ac] = aiHit?'hit':'miss';
-        setAiShots(shots);
-        if (pg.flat().filter(c=>c==='hit').length===totalShip) { setPhase('over'); setWinner('ai'); setScores(s=>({...s,ai:s.ai+1})); }
-        return pg;
-      });
+      const [ar,ac] = aiShot(player);
+      const np = player.map(row=>[...row]);
+      np[ar][ac] = np[ar][ac]==='ship'?'hit':'miss';
+      setPlayer(np);
+      if (!countShips(np)) { setWinner('ai'); setScores(s=>({...s,losses:s.losses+1})); setPhase('over'); }
+      setAiThinking(false);
     },600);
-  },[aiGrid,phase,aiShots,totalShip]);
+  },[phase,enemy,player,playerView,aiThinking]);
 
-  const reset = () => { setPlayerGrid(placeShips()); setAiGrid(placeShips()); setPhase('play'); setWinner(null); setAiShots(new Set()); setLastHit(null); };
-  const cellSize = Math.min(32,Math.floor((Math.min(window.innerWidth-48,340))/SIZE));
+  const reset = () => { setPhase('setup'); setPlayer(placeShipsRandom()); setEnemy(placeShipsRandom()); setPlayerView(Array(SIZE).fill(null).map(()=>Array(SIZE).fill('empty'))); setWinner(null); };
 
-  const Grid = ({grid,isPlayer,onShoot}:{grid:Cell[][],isPlayer:boolean,onShoot?:(r:number,c:number)=>void}) => (
-    <div style={{display:'inline-block'}}>
-      <div style={{color:'#64748b',fontSize:'0.72rem',fontWeight:700,marginBottom:'4px',textAlign:'center'}}>{isPlayer?'YOUR FLEET':'ENEMY FLEET'}</div>
-      {grid.map((row,r)=>(
-        <div key={r} style={{display:'flex'}}>
-          {row.map((cell,c)=>{
-            const show = isPlayer || cell==='hit' || cell==='miss';
-            return (
-              <div key={c} onClick={()=>!isPlayer&&onShoot&&onShoot(r,c)}
-                style={{width:cellSize,height:cellSize,border:'1px solid #1e293b',cursor:!isPlayer&&cell!=='hit'&&cell!=='miss'?'pointer':'default',
-                  background:cell==='hit'?'#ef444444':cell==='miss'?'#1e293b':show&&cell==='ship'?'#334155':'#0f172a',
-                  display:'flex',alignItems:'center',justifyContent:'center',fontSize:cellSize*0.55,
-                }}
-              >{cell==='hit'?'💥':cell==='miss'?'·':show&&cell==='ship'?'🚢':''}</div>
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
+  const cellColor = (cell: Cell, isEnemy: boolean) => {
+    if (cell==='hit') return '#ef4444';
+    if (cell==='miss') return '#1e3a5f';
+    if (!isEnemy&&cell==='ship') return '#3b82f6';
+    return '#0f172a';
+  };
+
+  const cs = 28;
 
   return (
     <GameShell title="Battleship" emoji="🚢" onReset={reset} scores={[
-      {label:'Wins',value:scores.player,color:'#38bdf8'},
-      {label:'AI Wins',value:scores.ai,color:'#ef4444'},
+      {label:'Wins',value:scores.wins,color:'#38bdf8'},
+      {label:'Losses',value:scores.losses,color:'#ef4444'},
     ]}>
-      {winner && <div style={{textAlign:'center',marginBottom:'12px',color:winner==='player'?'#22c55e':'#ef4444',fontWeight:800,fontSize:'1rem'}}>{winner==='player'?'🏆 You sank the fleet!':'💀 AI sank your fleet!'}</div>}
-      {!winner && <div style={{textAlign:'center',marginBottom:'12px',color:'#94a3b8',fontSize:'0.85rem',fontWeight:600}}>Click enemy grid to fire!</div>}
-      <div style={{display:'flex',gap:'16px',justifyContent:'center',flexWrap:'wrap'}}>
-        <Grid grid={playerGrid} isPlayer={true} />
-        <Grid grid={aiGrid} isPlayer={false} onShoot={shoot} />
-      </div>
+      {phase==='setup'&&(
+        <div style={{textAlign:'center'}}>
+          <div style={{fontSize:'2rem',marginBottom:'8px'}}>🚢</div>
+          <div style={{color:'#94a3b8',marginBottom:'16px',fontSize:'0.9rem'}}>Ships placed randomly. Ready to battle?</div>
+          <button onClick={()=>setPhase('play')} style={{background:'#38bdf8',border:'none',borderRadius:'14px',padding:'12px 32px',color:'#0f172a',fontWeight:800,fontSize:'1rem',cursor:'pointer',fontFamily:'Outfit,sans-serif'}}>Start Battle!</button>
+        </div>
+      )}
+      {phase!=='setup'&&(
+        <div>
+          {winner&&<div style={{textAlign:'center',marginBottom:'12px',color:winner==='player'?'#22c55e':'#ef4444',fontWeight:800,fontSize:'1.1rem'}}>{winner==='player'?'🏆 You Win!':'💀 AI Wins!'}</div>}
+          {!winner&&<div style={{textAlign:'center',marginBottom:'8px',color:'#94a3b8',fontSize:'0.82rem',fontWeight:600}}>{aiThinking?'AI is shooting…':'Click enemy grid to fire!'}</div>}
+          <div style={{display:'flex',gap:'16px',justifyContent:'center',flexWrap:'wrap'}}>
+            <div>
+              <div style={{color:'#64748b',fontSize:'0.72rem',fontWeight:700,textTransform:'uppercase',marginBottom:'6px',textAlign:'center'}}>Your Fleet</div>
+              <div style={{display:'inline-block',border:'2px solid #1e293b',borderRadius:'8px',overflow:'hidden'}}>
+                {player.map((row,r)=>(
+                  <div key={r} style={{display:'flex'}}>
+                    {row.map((cell,c)=>(
+                      <div key={c} style={{width:cs,height:cs,background:cellColor(cell,false),border:'1px solid #0f172a',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.7rem'}}>
+                        {cell==='hit'?'💥':cell==='miss'?'•':''}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{color:'#64748b',fontSize:'0.72rem',fontWeight:700,textTransform:'uppercase',marginBottom:'6px',textAlign:'center'}}>Enemy Waters</div>
+              <div style={{display:'inline-block',border:'2px solid #1e293b',borderRadius:'8px',overflow:'hidden'}}>
+                {playerView.map((row,r)=>(
+                  <div key={r} style={{display:'flex'}}>
+                    {row.map((cell,c)=>(
+                      <div key={c} onClick={()=>shoot(r,c)}
+                        style={{width:cs,height:cs,background:cellColor(cell,true),border:'1px solid #0f172a',cursor:phase==='play'&&cell==='empty'?'crosshair':'default',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.7rem',transition:'background 0.15s'}}
+                      >{cell==='hit'?'💥':cell==='miss'?'•':''}</div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {phase==='over'&&<div style={{textAlign:'center',marginTop:'14px'}}><button onClick={reset} style={{background:'#38bdf8',border:'none',borderRadius:'12px',padding:'10px 24px',color:'#0f172a',fontWeight:800,cursor:'pointer',fontFamily:'Outfit,sans-serif'}}>Play Again</button></div>}
+        </div>
+      )}
     </GameShell>
   );
 }

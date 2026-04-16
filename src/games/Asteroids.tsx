@@ -1,135 +1,128 @@
 import React, { useEffect, useRef, useState } from 'react';
 import GameShell from '../components/GameShell';
 
-const W=480,H=480;
-type Vec={x:number;y:number};
-const wrap=(v:Vec)=>({x:(v.x+W)%W,y:(v.y+H)%H});
-const dist=(a:Vec,b:Vec)=>Math.hypot(a.x-b.x,a.y-b.y);
+const W=400,H=400;
+type V={x:number,y:number};
+type Rock={x:number,y:number,vx:number,vy:number,r:number,pts:V[]};
+type Bullet={x:number,y:number,vx:number,vy:number,life:number};
 
-export default function Asteroids() {
+function makeRock(x:number,y:number,r:number):Rock{
+  const pts=Array(8).fill(0).map((_,i)=>{const a=i/8*Math.PI*2;const rr=r*(0.7+Math.random()*0.3);return{x:Math.cos(a)*rr,y:Math.sin(a)*rr};});
+  return{x,y,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,r,pts};
+}
+
+export default function Asteroids(){
   const canvasRef=useRef<HTMLCanvasElement>(null);
-  const keys=useRef<Record<string,boolean>>({});
-  const state=useRef({ship:{pos:{x:W/2,y:H/2},vel:{x:0,y:0},angle:0,alive:true},bullets:[] as {pos:Vec,vel:Vec,life:number}[],rocks:[] as {pos:Vec,vel:Vec,r:number,angle:number}[],score:0,frame:0,started:false});
+  const state=useRef({ship:{x:W/2,y:H/2,angle:0,vx:0,vy:0},rocks:[] as Rock[],bullets:[] as Bullet[],score:0,lives:3,alive:true,started:false,keys:{} as Record<string,boolean>,frame:0});
   const rafRef=useRef(0);
-  const [display,setDisplay]=useState({score:0,best:Number(localStorage.getItem('asteroids-best')||0),alive:true});
-
-  const spawnRocks=(n:number,avoid:Vec)=>Array(n).fill(null).map(()=>{
-    let pos:Vec;
-    do{pos={x:Math.random()*W,y:Math.random()*H};}while(dist(pos,avoid)<100);
-    const angle=Math.random()*Math.PI*2;
-    return{pos,vel:{x:Math.cos(angle)*(1+Math.random()*1.5),y:Math.sin(angle)*(1+Math.random()*1.5)},r:30+Math.random()*20,angle:0};
-  });
+  const [display,setDisplay]=useState({score:0,lives:3,alive:true,best:Number(localStorage.getItem('ast-best')||0)});
 
   const restart=()=>{
-    const ship={pos:{x:W/2,y:H/2},vel:{x:0,y:0},angle:0,alive:true};
-    state.current={ship,bullets:[],rocks:spawnRocks(5,ship.pos),score:0,frame:0,started:true};
-    setDisplay(d=>({...d,score:0,alive:true}));
+    const rocks=[makeRock(50,50,40),makeRock(350,50,40),makeRock(50,350,40),makeRock(350,350,40)];
+    state.current={ship:{x:W/2,y:H/2,angle:0,vx:0,vy:0},rocks,bullets:[],score:0,lives:3,alive:true,started:true,keys:{},frame:0};
+    setDisplay(d=>({...d,score:0,lives:3,alive:true}));
   };
 
   useEffect(()=>{
-    state.current.rocks=spawnRocks(5,{x:W/2,y:H/2});
+    const down=(e:KeyboardEvent)=>{state.current.keys[e.key]=true;if(!state.current.started)restart();};
+    const up=(e:KeyboardEvent)=>{state.current.keys[e.key]=false;};
+    window.addEventListener('keydown',down);window.addEventListener('keyup',up);
+    return()=>{window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);};
+  },[]);
+
+  useEffect(()=>{
     const canvas=canvasRef.current!;const ctx=canvas.getContext('2d')!;
     const tick=()=>{
-      const s=state.current;
-      if(s.started&&s.ship.alive){
-        s.frame++;
-        const sh=s.ship;
-        if(keys.current['ArrowLeft']||keys.current['a'])sh.angle-=0.06;
-        if(keys.current['ArrowRight']||keys.current['d'])sh.angle+=0.06;
-        if(keys.current['ArrowUp']||keys.current['w']){sh.vel.x+=Math.sin(sh.angle)*0.25;sh.vel.y-=Math.cos(sh.angle)*0.25;}
-        sh.vel.x*=0.98;sh.vel.y*=0.98;
-        sh.pos=wrap({x:sh.pos.x+sh.vel.x,y:sh.pos.y+sh.vel.y});
-        if(keys.current[' ']&&s.frame%12===0){s.bullets.push({pos:{...sh.pos},vel:{x:sh.vel.x+Math.sin(sh.angle)*8,y:sh.vel.y-Math.cos(sh.angle)*8},life:60});}
-        s.bullets=s.bullets.map(b=>({...b,pos:wrap({x:b.pos.x+b.vel.x,y:b.pos.y+b.vel.y}),life:b.life-1})).filter(b=>b.life>0);
-        s.rocks=s.rocks.map(r=>({...r,pos:wrap({x:r.pos.x+r.vel.x,y:r.pos.y+r.vel.y}),angle:r.angle+0.02}));
-        // Bullet-rock
-        const newRocks:(typeof s.rocks[0])[][]=[...s.rocks.map(r=>[r])];
-        let scoreAdd=0;
-        s.bullets=s.bullets.filter(b=>{
-          for(let i=0;i<newRocks.length;i++){
-            if(newRocks[i].length===1&&dist(b.pos,newRocks[i][0].pos)<newRocks[i][0].r){
-              const r=newRocks[i][0];
-              scoreAdd+=r.r>25?10:20;
-              if(r.r>18){const a=Math.random()*Math.PI*2;newRocks[i]=[{...r,r:r.r*0.55,vel:{x:Math.cos(a)*2,y:Math.sin(a)*2}},{...r,r:r.r*0.55,vel:{x:-Math.cos(a)*2,y:-Math.sin(a)*2}}] as (typeof s.rocks[0])[];}
-              else newRocks.splice(i,1);
-              return false;
-            }
+      const s=state.current;const k=s.keys;
+      if(s.started&&s.alive){
+        if(k['ArrowLeft']||k['a'])s.ship.angle-=0.05;
+        if(k['ArrowRight']||k['d'])s.ship.angle+=0.05;
+        if(k['ArrowUp']||k['w']){s.ship.vx+=Math.cos(s.ship.angle)*0.2;s.ship.vy+=Math.sin(s.ship.angle)*0.2;}
+        s.ship.vx*=0.98;s.ship.vy*=0.98;
+        s.ship.x=(s.ship.x+s.ship.vx+W)%W;s.ship.y=(s.ship.y+s.ship.vy+H)%H;
+        if((k[' ']||k['ArrowUp'])&&s.frame%10===0){
+          s.bullets.push({x:s.ship.x+Math.cos(s.ship.angle)*14,y:s.ship.y+Math.sin(s.ship.angle)*14,vx:Math.cos(s.ship.angle)*8,vy:Math.sin(s.ship.angle)*8,life:60});
+        }
+        s.bullets=s.bullets.map(b=>({...b,x:(b.x+b.vx+W)%W,y:(b.y+b.vy+H)%H,life:b.life-1})).filter(b=>b.life>0);
+        s.rocks=s.rocks.map(r=>({...r,x:(r.x+r.vx+W)%W,y:(r.y+r.vy+H)%H}));
+        // Bullet-rock collision
+        const newRocks:Rock[]=[]; let scored=false;
+        for(const rock of s.rocks){
+          let hit=false;
+          for(let i=s.bullets.length-1;i>=0;i--){
+            const b=s.bullets[i];
+            if(Math.hypot(b.x-rock.x,b.y-rock.y)<rock.r){hit=true;s.bullets.splice(i,1);s.score+=rock.r>20?10:rock.r>10?20:30;scored=true;break;}
           }
-          return true;
-        });
-        s.rocks=newRocks.flat();
-        if(scoreAdd){s.score+=scoreAdd;const best=Number(localStorage.getItem('asteroids-best')||0);if(s.score>best)localStorage.setItem('asteroids-best',String(s.score));setDisplay(d=>({...d,score:s.score,best:Math.max(d.best,s.score)}));}
-        if(s.rocks.length===0)s.rocks=spawnRocks(6,sh.pos);
+          if(hit&&rock.r>12){newRocks.push(makeRock(rock.x,rock.y,rock.r/2));newRocks.push(makeRock(rock.x,rock.y,rock.r/2));}
+          else if(!hit)newRocks.push(rock);
+        }
+        s.rocks=newRocks;
+        if(scored)setDisplay(d=>({...d,score:s.score}));
+        if(!s.rocks.length){s.rocks=[makeRock(50,50,40),makeRock(350,50,40),makeRock(50,350,40),makeRock(350,350,40)];}
         // Ship-rock collision
-        for(const r of s.rocks){if(dist(sh.pos,r.pos)<r.r-8){sh.alive=false;setDisplay(d=>({...d,alive:false}));break;}}
+        for(const rock of s.rocks){
+          if(Math.hypot(s.ship.x-rock.x,s.ship.y-rock.y)<rock.r+10){
+            s.lives--;s.ship={x:W/2,y:H/2,angle:0,vx:0,vy:0};
+            if(s.lives<=0){s.alive=false;const best=Number(localStorage.getItem('ast-best')||0);if(s.score>best)localStorage.setItem('ast-best',String(s.score));setDisplay(d=>({...d,lives:0,alive:false,best:Math.max(d.best,s.score)}));}
+            else setDisplay(d=>({...d,lives:s.lives}));
+            break;
+          }
+        }
+        s.frame++;
       }
-      // Draw
-      ctx.fillStyle='#0a0a1a';ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#0f172a';ctx.fillRect(0,0,W,H);
       // Stars
-      ctx.fillStyle='#ffffff22';
-      for(let i=0;i<50;i++){ctx.fillRect((i*73)%W,(i*47)%H,1,1);}
+      ctx.fillStyle='#1e293b';
+      for(let i=0;i<50;i++){ctx.fillRect((i*37)%W,(i*53)%H,1,1);}
       // Rocks
-      for(const r of s.rocks){
-        ctx.strokeStyle='#94a3b8';ctx.lineWidth=2;
-        ctx.beginPath();
-        for(let i=0;i<8;i++){const a=r.angle+i*Math.PI/4;const rd=r.r*(0.8+Math.sin(i*2.3)*0.2);const x=r.pos.x+Math.cos(a)*rd;const y=r.pos.y+Math.sin(a)*rd;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
-        ctx.closePath();ctx.stroke();
+      ctx.strokeStyle='#94a3b8';ctx.lineWidth=2;
+      for(const rock of s.rocks){
+        ctx.beginPath();ctx.moveTo(rock.x+rock.pts[0].x,rock.y+rock.pts[0].y);
+        rock.pts.forEach(p=>ctx.lineTo(rock.x+p.x,rock.y+p.y));ctx.closePath();ctx.stroke();
       }
       // Bullets
       ctx.fillStyle='#fbbf24';
-      for(const b of s.bullets){ctx.beginPath();ctx.arc(b.pos.x,b.pos.y,3,0,Math.PI*2);ctx.fill();}
+      for(const b of s.bullets){ctx.beginPath();ctx.arc(b.x,b.y,3,0,Math.PI*2);ctx.fill();}
       // Ship
-      if(s.ship.alive){
-        const sh=s.ship;
-        ctx.strokeStyle='#818cf8';ctx.lineWidth=2;
-        ctx.save();ctx.translate(sh.pos.x,sh.pos.y);ctx.rotate(sh.angle);
-        ctx.beginPath();ctx.moveTo(0,-16);ctx.lineTo(10,12);ctx.lineTo(-10,12);ctx.closePath();ctx.stroke();
-        if(keys.current['ArrowUp']||keys.current['w']){ctx.strokeStyle='#f97316';ctx.beginPath();ctx.moveTo(-6,12);ctx.lineTo(0,22);ctx.lineTo(6,12);ctx.stroke();}
+      if(s.alive){
+        ctx.save();ctx.translate(s.ship.x,s.ship.y);ctx.rotate(s.ship.angle);
+        ctx.strokeStyle='#38bdf8';ctx.lineWidth=2;
+        ctx.beginPath();ctx.moveTo(14,0);ctx.lineTo(-10,8);ctx.lineTo(-6,0);ctx.lineTo(-10,-8);ctx.closePath();ctx.stroke();
         ctx.restore();
       }
-      if(!s.started){ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#e2e8f0';ctx.font='bold 20px Outfit';ctx.textAlign='center';ctx.fillText('Arrows/WASD to move',W/2,H/2-10);ctx.fillText('Space to shoot',W/2,H/2+20);}
-      if(!s.ship.alive){ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#ef4444';ctx.font='bold 24px Outfit';ctx.textAlign='center';ctx.fillText('Ship Destroyed!',W/2,H/2-10);ctx.fillStyle='#94a3b8';ctx.font='16px Outfit';ctx.fillText('Click to restart',W/2,H/2+20);}
+      if(!s.started){
+        ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+        ctx.fillStyle='#fff';ctx.font='bold 18px Outfit,sans-serif';ctx.textAlign='center';
+        ctx.fillText('Press any key to start',W/2,H/2);
+        ctx.font='13px Outfit,sans-serif';ctx.fillText('Arrow keys / WASD to move, Space to shoot',W/2,H/2+26);
+      }
+      if(!s.alive){
+        ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+        ctx.fillStyle='#ef4444';ctx.font='bold 22px Outfit,sans-serif';ctx.textAlign='center';
+        ctx.fillText('Game Over!',W/2,H/2-14);
+        ctx.fillStyle='#fff';ctx.font='16px Outfit,sans-serif';
+        ctx.fillText(`Score: ${s.score}`,W/2,H/2+14);
+        ctx.fillText('Press any key to restart',W/2,H/2+40);
+      }
       rafRef.current=requestAnimationFrame(tick);
     };
     rafRef.current=requestAnimationFrame(tick);
     return()=>cancelAnimationFrame(rafRef.current);
   },[]);
 
-  useEffect(()=>{
-    const d=(e:KeyboardEvent)=>{keys.current[e.key]=true;if(e.key===' ')e.preventDefault();};
-    const u=(e:KeyboardEvent)=>{keys.current[e.key]=false;};
-    window.addEventListener('keydown',d);window.addEventListener('keyup',u);
-    return()=>{window.removeEventListener('keydown',d);window.removeEventListener('keyup',u);};
-  },[]);
-
   const scale=Math.min(1,(window.innerWidth-32)/W);
 
-  return (
+  return(
     <GameShell title="Asteroids" emoji="🚀" onReset={restart} scores={[
       {label:'Score',value:display.score,color:'#7dd3fc'},
+      {label:'Lives',value:display.lives,color:'#22c55e'},
       {label:'Best',value:display.best,color:'#fbbf24'},
     ]}>
       <div style={{transform:`scale(${scale})`,transformOrigin:'top center',width:W,margin:'0 auto'}}>
-        <canvas ref={canvasRef} width={W} height={H} onClick={()=>{if(!state.current.started)restart();else if(!state.current.ship.alive)restart();}}
-          style={{borderRadius:'12px',border:'2px solid #1e293b',display:'block',cursor:'crosshair'}} />
+        <canvas ref={canvasRef} width={W} height={H} onClick={restart}
+          style={{borderRadius:'12px',border:'2px solid #1e293b',display:'block'}}/>
       </div>
-      {/* Mobile controls */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'6px',maxWidth:300,margin:'12px auto 0'}}>
-        {['↶','','','','↷'].map((b,i)=>(
-          <button key={i}
-            onTouchStart={()=>{if(b==='↶')keys.current['ArrowLeft']=true;if(b==='↷')keys.current['ArrowRight']=true;}}
-            onTouchEnd={()=>{keys.current['ArrowLeft']=false;keys.current['ArrowRight']=false;}}
-            style={{height:44,background:b?'#1e293b':'transparent',border:b?'1px solid #334155':'none',borderRadius:8,cursor:b?'pointer':'default',fontSize:'1.2rem',color:'#e2e8f0'}}
-          >{b}</button>
-        ))}
-        {['','','','','',' '].map((b,i)=>(
-          <button key={i}
-            onTouchStart={()=>{if(i===2)keys.current['ArrowUp']=true;if(i===5)keys.current[' ']=true;}}
-            onTouchEnd={()=>{keys.current['ArrowUp']=false;keys.current[' ']=false;}}
-            style={{height:44,background:i===2||i===5?'#1e293b':'transparent',border:i===2||i===5?'1px solid #334155':'none',borderRadius:8,cursor:i===2||i===5?'pointer':'default',fontSize:i===2?'1.2rem':'0.8rem',color:'#e2e8f0',gridColumn:i===5?'span 5':'auto'}}
-          >{i===2?'↑':i===5?'🔫 Fire':''}</button>
-        ))}
-      </div>
+      <div style={{textAlign:'center',marginTop:'8px',color:'#64748b',fontSize:'0.78rem'}}>Arrow keys/WASD to move · Space to shoot</div>
     </GameShell>
   );
 }
